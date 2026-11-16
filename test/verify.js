@@ -193,6 +193,9 @@ try {
   check('Polished cards and background texture', css.includes('radial-gradient') && css.includes('border-radius:22px') && css.includes('0 12px 28px'));
   const js = await j('/app.js');
   check('Dashboard and theme choices persist in localStorage', js.includes("localStorage.getItem('mep-theme')") && js.includes("localStorage.getItem('mep-dashboard')"));
+  check('Low stock card says how many items are low, with stock figures', js.includes("'items'} low") && js.includes(" / min "));
+  check('Next bake card puts date and each item on its own line', js.includes('niceDate(next.date)') && js.includes("join('<br>')"));
+  check('Planned items use singular/plural, e.g. 1 brownie, 2 brownies', js.includes("itemLabel(i.recipeId, i.qty)") && js.includes("'Brownies') return 'Brownie'"));
 } catch (e) {
   fail++; console.log('  FAIL exception', e);
 } finally {

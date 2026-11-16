@@ -27,17 +27,37 @@ document.getElementById('dashboard-toggle').onclick = () => {
   localStorage.setItem('mep-dashboard', on ? 'off' : 'on');
   applyDashboard();
 };
+// Singular / plural for a planned item, e.g. 1 brownie, 2 brownies.
+function itemLabel(recipeId, qty) {
+  const r = recipes.find(x => x.id === recipeId);
+  const name = r ? r.name : recipeId;
+  if (qty <= 1) {
+    if (name === 'Brownies') return 'Brownie';
+    if (name === 'Cookies (from balls)') return 'Box of cookies';
+    if (name.endsWith('ies')) return name.slice(0, -3) + 'y';
+    if (name.endsWith('s')) return name.slice(0, -1);
+    return name;
+  }
+  if (name === 'Cookies (from balls)') return 'Boxes of cookies';
+  if (name.endsWith('s')) return name;
+  if (name.endsWith('y')) return name.slice(0, -1) + 'ies';
+  return name + 's';
+}
+function niceDate(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
 function renderDashboard() {
   const balls = ingredients.find(i => i.id === 'cookie-dough-balls');
   const low = ingredients.filter(i => i.min > 0 && i.current <= i.min * 1.5);
-  const below = low.filter(i => i.current <= i.min);
   const next = plans.filter(p => p.status === 'planned').sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
   const closest = [...ingredients].filter(i => i.min > 0).sort((a, b) => (a.current / a.min) - (b.current / b.min)).slice(0, 2);
   document.getElementById('dashboard-cards').innerHTML = `
   <div class="dash-card"><h3>Cookie dough balls</h3><div class="big">${balls ? fmt(balls.current) : '0'}</div><p>frozen, ready to bake</p></div>
-  <div class="dash-card"><h3>Low stock</h3><div class="big">${low.length}</div><p>${low.length ? low.map(i => `${i.name}${i.current <= i.min ? ' (below min)' : ''}`).join(', ') : 'All stock healthy'}</p></div>
-  <div class="dash-card"><h3>Next bake</h3><div class="big" style="font-size:22px">${next ? next.name : 'None planned'}</div><p>${next ? `${next.date} — ${next.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ')}` : 'Plan one in Batch Planning'}</p></div>
-  <div class="dash-card"><h3>Closest to minimum</h3><div class="big" style="font-size:22px">${closest.map(i => i.name).join(' · ')}</div><p>${closest.map(i => `${i.name}: ${fmt(i.current)} / min ${fmt(i.min)} ${i.unit}`).join('<br>')}</p></div>`;
+  <div class="dash-card"><h3>Low stock</h3><div class="big">${low.length} ${low.length === 1 ? 'item' : 'items'} low</div><p>${low.length ? low.map(i => `${i.name}: ${fmt(i.current)} / min ${fmt(i.min)} ${i.unit}${i.current <= i.min ? ' (below min)' : ''}`).join('<br>') : 'All stock healthy'}</p></div>
+  <div class="dash-card"><h3>Next bake</h3><div class="big" style="font-size:22px">${next ? next.name : 'None planned'}</div><p>${next ? `${niceDate(next.date)}<br>${next.items.map(i => `${fmt(i.qty)} × ${itemLabel(i.recipeId, i.qty)}`).join('<br>')}` : 'Plan one in Batch Planning'}</p></div>
+  <div class="dash-card"><h3>Closest to minimum</h3><div class="big" style="font-size:22px">${closest.map(i => i.name).join('<br>')}</div><p>${closest.map(i => `${i.name}: ${fmt(i.current)} / min ${fmt(i.min)} ${i.unit}`).join('<br>')}</p></div>`;
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
