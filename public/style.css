@@ -10,23 +10,37 @@
   --muted:#5c564e;
   --red:#9b2c2c;
 }
-/* Dark mode: same teal and bronze, on a deep teal-grey background. */
+/* Dark mode: same teal and bronze, on a deep teal-grey background.
+   Text on buttons and on the active tab is always ivory (#fffbf8),
+   never the --ivory background variable, or it goes dark on dark. */
 [data-theme="dark"]{
   --ivory:#12262b;
   --ink:#fdf6ee;
   --cream:#1c3a40;
   --line:#2c4a51;
-  --muted:#b9c4c2;
+  --muted:#c3cfcc;
 }
 [data-theme="dark"] body{color:#f2ece3}
+[data-theme="dark"] header{background:linear-gradient(180deg,#081e23,#050f12);border-bottom:3px solid var(--bronze)}
+[data-theme="dark"] header h1{color:#fffbf8}
+[data-theme="dark"] header .eyebrow{color:#d8b58a}
+[data-theme="dark"] header .tagline{color:rgba(255,251,248,.92)}
+[data-theme="dark"] header .sub{color:rgba(255,251,248,.72)}
 [data-theme="dark"] .card{background:linear-gradient(180deg,#1c383e,#162e33);border-color:var(--line);box-shadow:0 2px 6px rgba(0,0,0,.3),0 12px 28px rgba(0,0,0,.4)}
-[data-theme="dark"] button.ghost{background:#1a343a}
-[data-theme="dark"] nav{background:#12262b}
+[data-theme="dark"] nav{background:#0d2126}
 [data-theme="dark"] nav button{background:transparent;color:#fdf6ee}
-[data-theme="dark"] nav button.active{background:var(--teal);color:var(--ivory)}
+[data-theme="dark"] nav button.active{background:var(--bronze);color:#12262b;border-color:var(--bronze)}
 [data-theme="dark"] input,[data-theme="dark"] textarea,[data-theme="dark"] select{background:#0f2227;color:#f2ece3;border-color:#3a5a61}
-[data-theme="dark"] .sub{color:var(--bronze)}
+[data-theme="dark"] .sub{color:#d8b58a}
+[data-theme="dark"] button{background:linear-gradient(180deg,#2a6b74,#18434a);color:#fffbf8}
+[data-theme="dark"] button.ghost{background:transparent;color:#e8c9a0;border-color:var(--bronze)}
 [data-theme="dark"] button.ghost:hover{background:#1c3a40}
+[data-theme="dark"] button:disabled{opacity:.6;color:#fffbf8}
+[data-theme="dark"] label{color:#cfe3e6}
+[data-theme="dark"] .badge{background:#1c3a40;color:#e8c9a0}
+[data-theme="dark"] .ok-text{color:#8fd0d5}
+[data-theme="dark"] .low-text{color:#d8b58a}
+[data-theme="dark"] .bar{background:#2c4a51}
 *{box-sizing:border-box}
 body{font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#22201d;line-height:1.65;
   /* Subtle paper texture: faint dots over the ivory, barely visible. */
@@ -73,6 +87,7 @@ button{padding:12px 20px;border:none;border-radius:999px;background:linear-gradi
   box-shadow:0 4px 12px rgba(24,67,74,.22);transition:transform .12s ease,box-shadow .12s ease,filter .12s ease}
 button:hover{filter:brightness(1.07);transform:translateY(-1px);box-shadow:0 6px 16px rgba(24,67,74,.28)}
 button:active{transform:translateY(0);box-shadow:0 2px 8px rgba(24,67,74,.22)}
+button:disabled{opacity:.55;cursor:not-allowed;transform:none}
 button.ghost{background:#fffdfb;color:var(--teal);border:1px solid var(--bronze);box-shadow:0 2px 8px rgba(24,67,74,.08)}
 button.ghost:hover{border-color:var(--teal);background:var(--cream)}
 button.danger{background:transparent;color:var(--red);border:1px solid #e5b8b8}

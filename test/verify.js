@@ -191,6 +191,10 @@ try {
   const css = await j('/style.css');
   check('Dark mode styles exist', css.includes('[data-theme="dark"]'));
   check('Polished cards and background texture', css.includes('radial-gradient') && css.includes('border-radius:22px') && css.includes('0 12px 28px'));
+  check('Dark mode buttons use light text, not the dark background variable', css.includes("[data-theme=\"dark\"] button{background:linear-gradient(180deg,#2a6b74,#18434a);color:#fffbf8}"));
+  check('Dark mode active tab is bronze with dark text', css.includes("nav button.active{background:var(--bronze);color:#12262b"));
+  check('Dark mode banner is darker than the page with light title', css.includes("[data-theme=\"dark\"] header{background:linear-gradient(180deg,#081e23,#050f12)") && css.includes("[data-theme=\"dark\"] header h1{color:#fffbf8}"));
+  check('Dark mode labels are light, not teal on dark', css.includes("[data-theme=\"dark\"] label{color:#cfe3e6}"));
   const js = await j('/app.js');
   check('Dashboard and theme choices persist in localStorage', js.includes("localStorage.getItem('mep-theme')") && js.includes("localStorage.getItem('mep-dashboard')"));
   check('Low stock card says how many items are low, with stock figures', js.includes("'items'} low") && js.includes(" / min "));

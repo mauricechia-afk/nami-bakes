@@ -41,7 +41,7 @@ Optional: set `NAMI_API_KEY` in the environment to require an `x-api-key` header
 npm test
 ```
 
-Runs against a temporary database, never the live app. 85 checks: health, inventory, the egg rule, dough to balls, plan edit and delete, shopping list and restock conversions, recipe ingredient validation, the frontend, and MCP `initialize` / `tools/list` / `tools/call`.
+Runs against a temporary database, never the live app. 89 checks: health, inventory, the egg rule, dough to balls, plan edit and delete, shopping list and restock conversions, recipe ingredient validation, the frontend, and MCP `initialize` / `tools/list` / `tools/call`.
 
 ## Project structure
 
