@@ -41,6 +41,21 @@
 [data-theme="dark"] .ok-text{color:#8fd0d5}
 [data-theme="dark"] .low-text{color:#d8b58a}
 [data-theme="dark"] .bar{background:#2c4a51}
+/* Lock screen: a solid, opaque overlay, so the app behind it is never
+   readable. The app underneath is also blurred while locked. */
+body.locked > :not(.lock-screen){filter:blur(12px);pointer-events:none;user-select:none}
+.lock-screen{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(180deg,rgba(8,30,35,.97),rgba(5,15,18,.97));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.lock-screen[hidden]{display:none}
+.lock-card{background:#fffbf8;color:#22201d;border-radius:22px;padding:32px 28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.45);text-align:center}
+.lock-card .eyebrow{color:#a67c4e;letter-spacing:.22em;text-transform:uppercase;font-size:12px;font-weight:700}
+.lock-card h2{font-family:"Playfair Display",Georgia,serif;font-size:30px;margin:6px 0 4px;color:#000}
+.lock-card p{color:#5c564e;font-size:15px;margin:0 0 18px}
+.lock-card label{display:block;text-align:left;font-size:14px;color:#5c564e;margin-bottom:6px}
+.lock-card .lock-row{display:flex;gap:8px}
+.lock-card input{flex:1;min-width:0;padding:12px 14px;font-size:17px;border:1px solid #e8ddd0;border-radius:12px;background:#fff;color:#22201d}
+.lock-card .lock-toggle{flex:none;width:auto;padding:12px 14px}
+.lock-card .lock-unlock{width:100%;margin-top:14px;padding:13px;font-size:16px}
+.lock-card .lock-error{color:#9b2c2c;min-height:22px;margin:10px 0 0;font-size:14px}
 *{box-sizing:border-box}
 body{font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;color:#22201d;line-height:1.65;
   /* Subtle paper texture: faint dots over the ivory, barely visible. */

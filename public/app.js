@@ -8,12 +8,13 @@ const api = (p, opts = {}) => {
   if (key) headers['x-api-key'] = key;
   return fetch(p, { ...opts, headers }).then(async r => { const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = { raw: t }; } if (!r.ok) { const e = new Error(j.error || t); e.status = r.status; throw e; } return j; });
 };
-function showLock() { document.getElementById('lock-screen').style.display = ''; document.getElementById('lock-error').textContent = ''; }
+function showLock() { document.body.classList.add('locked'); document.getElementById('lock-screen').hidden = false; document.getElementById('lock-error').textContent = ''; document.getElementById('lock-password').focus(); }
+function hideLock() { document.body.classList.remove('locked'); document.getElementById('lock-screen').hidden = true; }
 async function unlock() {
   const key = document.getElementById('lock-password').value;
   if (!key) return;
   localStorage.setItem('mep-api-key', key);
-  try { await loadAll(); document.getElementById('lock-screen').style.display = 'none'; }
+  try { await loadAll(); hideLock(); }
   catch (e) { localStorage.removeItem('mep-api-key'); document.getElementById('lock-error').textContent = 'Wrong password, try again.'; }
 }
 async function downloadBackup() {
@@ -417,6 +418,13 @@ async function undoHistory(id) {
 }
 document.getElementById('lock-unlock').onclick = unlock;
 document.getElementById('lock-password').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
+document.getElementById('lock-toggle').onclick = () => {
+  const inp = document.getElementById('lock-password');
+  const showing = inp.type === 'text';
+  inp.type = showing ? 'password' : 'text';
+  document.getElementById('lock-toggle').textContent = showing ? 'Show' : 'Hide';
+  inp.focus();
+};
 document.getElementById('download-backup').onclick = downloadBackup;
 document.getElementById('restore-backup').onchange = e => restoreBackup(e.target.files[0]);
 applyTheme();

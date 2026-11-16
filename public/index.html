@@ -102,12 +102,19 @@
     <div class="row"><button id="download-backup">Download backup</button><label>Restore backup <input id="restore-backup" type="file" accept="application/json"></label></div>
   </section>
 
-  <div id="lock-screen" style="display:none; position:fixed; inset:0; background:var(--bg); z-index:10; padding:40px 20px; text-align:center">
-    <h2>Mise en Place is locked</h2>
-    <p>Enter the shared password to unlock. It is remembered on this device, so you only do this once per device.</p>
-    <input id="lock-password" type="password" placeholder="Shared password" style="padding:10px; font-size:16px">
-    <button id="lock-unlock">Unlock</button>
-    <p id="lock-error" class="warn"></p>
+  <div id="lock-screen" class="lock-screen" hidden>
+    <div class="lock-card">
+      <div class="eyebrow">Nami Bakes</div>
+      <h2>Mise en Place</h2>
+      <p>This app is locked. Enter the shared password to unlock it. It is remembered on this device, so you only do this once per device.</p>
+      <label for="lock-password">Shared password</label>
+      <div class="lock-row">
+        <input id="lock-password" type="text" placeholder="Shared password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button id="lock-toggle" class="ghost lock-toggle" type="button">Hide</button>
+      </div>
+      <button id="lock-unlock" class="lock-unlock" type="button">Unlock</button>
+      <p id="lock-error" class="lock-error"></p>
+    </div>
   </div>
 </main>
 <script src="app.js"></script>
