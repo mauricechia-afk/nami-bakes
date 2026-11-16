@@ -146,6 +146,42 @@ try {
   await j(`/api/bake-plans/${formulaPlan.id}`, { method: 'DELETE' });
   await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
 
+  console.log('Day-by-day timing — short before the next shop is flagged');
+  await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 20 }) });
+  const timingPlan = await j('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Timing test', date: '2026-11-18', items: [{ recipeId: 'brownies', qty: 5 }] }) });
+  const shopTiming = await j('/api/shopping-list');
+  const eggsTiming = shopTiming.items.find(i => i.ingredientId === 'eggs');
+  check('Eggs run short on the bake date, before Friday', eggsTiming && eggsTiming.shortDate === '2026-11-18' && eggsTiming.shortBeforeNextShop === true, JSON.stringify(eggsTiming));
+  await j(`/api/bake-plans/${timingPlan.id}`, { method: 'DELETE' });
+
+  console.log('Egg rule rounds aggregate up to nearest 0.5 portion');
+  const brookie15 = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1.5 }] }) });
+  check('1.5 brookies = 0.75 brownie portions -> 3 brownie eggs, total eggs 3.75', eq(brookie15.totals.find(t => t.ingredientId === 'eggs')?.qty, 3.75), JSON.stringify(brookie15.totals));
+
+  console.log('Stock history and undo');
+  const histBefore = await j('/api/history');
+  await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 12 }) });
+  const histAfter = await j('/api/history');
+  check('Manual stock change is logged', histAfter.length > histBefore.length && histAfter[0].ingredientId === 'eggs' && histAfter[0].before === 20 && histAfter[0].after === 12, JSON.stringify(histAfter[0]));
+  const undone = await j(`/api/history/${histAfter[0].id}/undo`, { method: 'POST' });
+  check('Undo restores stock', undone.undone === true && (await j('/api/inventory')).find(i => i.id === 'eggs')?.current === 20);
+
+  console.log('Business ID, pack size, large change flag');
+  const invAll = await j('/api/inventory');
+  check('Every ingredient carries businessId nami-bakes', invAll.every(i => i.businessId === 'nami-bakes'));
+  const recipesAll = await j('/api/recipes');
+  check('Cookies pack size is 6', recipesAll.find(r => r.id === 'cookies-from-balls')?.packSize === 6);
+  const js2 = await j('/app.js');
+  check('Large stock change asks for confirmation', js2.includes('big change'));
+
+  console.log('Cost tracking — price at restock, bake cost from latest price');
+  const restockPriced = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'eggs', amount: 1, unit: 'tray', price: 10 }) });
+  check('Restock with $10 for a tray of 10 eggs records $1.00 per egg', eq(restockPriced.unitPrice, 1), JSON.stringify(restockPriced));
+  const costPlan = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brownies', qty: 1 }] }) });
+  check('1 brownie costs $3 in eggs at $1 per egg', eq(costPlan.totalCost, 3), JSON.stringify(costPlan));
+  check('Bake cost lists ingredients with no price yet', costPlan.missingPrices.includes('Flour'));
+  await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
+
   console.log('Interactive restock — buy in a different unit, converted to inventory unit');
   const shop2 = await j('/api/shopping-list');
   const eggsItem = shop2.items.find(i => i.ingredientId === 'eggs');

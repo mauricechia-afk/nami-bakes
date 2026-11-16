@@ -14,7 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { load, save } from './lib/store.js';
-import { fmtQty, round3, brownieEggs, planBake, makeCookieDough, shoppingList, nextFriday, purchaseUnitsFor, convertPurchase } from './lib/calc.js';
+import { fmtQty, round3, round2, brownieEggs, planBake, makeCookieDough, shoppingList, costTotals, nextFriday, purchaseUnitsFor, convertPurchase } from './lib/calc.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -45,6 +45,45 @@ function requireKey(req, res) {
 function slug(s) { return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
 // ---------- business operations (shared by REST + MCP) ----------
+const BUSINESS_ID = 'nami-bakes';
+function logHistory(entry) {
+  if (!Array.isArray(db.history)) db.history = [];
+  const e = { id: `hist-${Date.now()}-${Math.floor(Math.random() * 1000)}`, at: new Date().toISOString(), businessId: BUSINESS_ID, undone: false, ...entry };
+  db.history.push(e);
+  if (db.history.length > 500) db.history = db.history.slice(-500);
+  return e;
+}
+function undoHistory(id) {
+  const e = (db.history || []).find(x => x.id === id);
+  if (!e) throw new Error('History entry not found');
+  if (e.undone) throw new Error('This change was already undone');
+  if (e.type === 'inventory' || e.type === 'restock') {
+    const ing = db.ingredients.find(i => i.id === e.ingredientId);
+    if (!ing) throw new Error('Ingredient not found');
+    ing.current = round3(e.before);
+    if (e.type === 'restock' && e.lastPriceBefore !== undefined) { ing.lastPrice = e.lastPriceBefore; }
+  } else if (e.type === 'bake-complete') {
+    const plan = db.bakePlans.find(p => p.id === e.planId);
+    if (!plan) throw new Error('Bake plan not found');
+    if (plan.status !== 'completed') throw new Error('Bake plan is not completed');
+    for (const t of e.deducted || []) {
+      const ing = db.ingredients.find(i => i.id === t.ingredientId);
+      if (ing) ing.current = round3(ing.current + t.qty);
+    }
+    if (e.ballsAdded) {
+      const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
+      if (balls) balls.current = round3(balls.current - e.ballsAdded);
+    }
+    plan.status = 'planned';
+    delete plan.completedAt;
+    delete plan.cost;
+  } else {
+    throw new Error('This change cannot be undone');
+  }
+  e.undone = true;
+  persist();
+  return e;
+}
 function validateRecipeIngredients(ingredients) {
   if (!Array.isArray(ingredients)) throw new Error('Recipe ingredients must be a list');
   for (const ing of ingredients) {
@@ -58,7 +97,15 @@ function validateRecipeIngredients(ingredients) {
   }
 }
 function doPlan(items, dough) {
-  return planBake(items, db.recipes, db.ingredients, dough);
+  const calc = planBake(items, db.recipes, db.ingredients, dough);
+  const ingredientById = Object.fromEntries(db.ingredients.map(i => [i.id, i]));
+  const costs = costTotals(calc.totals, ingredientById);
+  let totalSell = 0;
+  for (const item of items) {
+    const r = db.recipes.find(x => x.id === item.recipeId);
+    if (r && Number.isFinite(Number(r.sellPrice))) totalSell = round2(totalSell + Number(item.qty) * Number(r.sellPrice));
+  }
+  return { ...calc, costs: costs.costs, totalCost: costs.totalCost, missingPrices: costs.missingPrices, totalSell, margin: round2(totalSell - costs.totalCost) };
 }
 function doCompleteBake(planId) {
   const plan = db.bakePlans.find(p => p.id === planId);
@@ -78,8 +125,10 @@ function doCompleteBake(planId) {
   }
   plan.status = 'completed';
   plan.completedAt = new Date().toISOString();
+  plan.cost = { totalCost: calc.totalCost, totalSell: calc.totalSell, margin: calc.margin, costs: calc.costs };
+  const entry = logHistory({ type: 'bake-complete', planId: plan.id, name: plan.name, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, cost: plan.cost });
   persist();
-  return { plan, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0 };
+  return { plan, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, historyId: entry.id };
 }
 function doMakeDough(input) {
   const result = makeCookieDough(input, db.recipes, db.ingredients);
@@ -100,13 +149,16 @@ function doMakeDough(input) {
 }
 function doShoppingList() {
   const plannedTotals = [];
+  const plansWithDates = [];
   for (const plan of db.bakePlans.filter(p => p.status === 'planned')) {
-    for (const t of doPlan(plan.items, plan.dough).totals) {
+    const calc = doPlan(plan.items, plan.dough);
+    plansWithDates.push({ date: plan.date, totals: calc.totals });
+    for (const t of calc.totals) {
       const ex = plannedTotals.find(x => x.ingredientId === t.ingredientId);
       if (ex) ex.qty = round3(ex.qty + t.qty); else plannedTotals.push({ ...t });
     }
   }
-  const items = shoppingList(db.ingredients, plannedTotals).map(i => ({
+  const items = shoppingList(db.ingredients, plannedTotals, plansWithDates).map(i => ({
     ...i,
     purchaseUnits: purchaseUnitsFor(i.ingredientId, i.unit),
   }));
@@ -114,14 +166,27 @@ function doShoppingList() {
 }
 // Restock one shopping item: enter the amount bought in any purchase unit,
 // convert it to the inventory unit, and add it to stock. One item at a time.
-function doRestock(ingredientId, amount, unit) {
+// Optional price (SGD paid in total) records the latest price per stock unit.
+function doRestock(ingredientId, amount, unit, price) {
   const ing = db.ingredients.find(i => i.id === ingredientId);
   if (!ing) throw new Error(`Ingredient not found: ${ingredientId}`);
   const added = convertPurchase(ingredientId, amount, unit);
   const before = ing.current;
+  const lastPriceBefore = ing.lastPrice === undefined ? null : ing.lastPrice;
   ing.current = round3(ing.current + added);
+  let unitPrice = null;
+  if (price !== undefined && price !== null && price !== '') {
+    const p = Number(price);
+    if (!Number.isFinite(p) || p < 0) throw new Error('Price must be 0 or more');
+    unitPrice = round2(p / added);
+    ing.lastPrice = unitPrice;
+    ing.lastPriceAt = new Date().toISOString().slice(0, 10);
+    if (!Array.isArray(ing.priceHistory)) ing.priceHistory = [];
+    ing.priceHistory.push({ at: ing.lastPriceAt, amount: Number(amount), unit, added, price: p, unitPrice });
+  }
+  const entry = logHistory({ type: 'restock', ingredientId, name: ing.name, before, after: ing.current, added, unit: ing.unit, price: price === undefined ? null : Number(price), unitPrice, lastPriceBefore });
   persist();
-  return { ingredientId, name: ing.name, unit: ing.unit, boughtAmount: Number(amount), boughtUnit: unit, added, before, after: ing.current };
+  return { ingredientId, name: ing.name, unit: ing.unit, boughtAmount: Number(amount), boughtUnit: unit, added, before, after: ing.current, unitPrice, historyId: entry.id };
 }
 
 // ---------- MCP server ----------
@@ -148,11 +213,15 @@ function createMcpServer() {
     });
   server.tool('add_ingredient', 'Add a new ingredient.', { name: z.string(), unit: z.string(), current: z.number(), min: z.number() },
     async ({ name, unit, current, min }) => {
-      const ing = { id: slug(name), name, unit, current: round3(current), min: round3(min) };
+      const ing = { businessId: BUSINESS_ID, id: slug(name), name, unit, current: round3(current), min: round3(min) };
       if (db.ingredients.some(i => i.id === ing.id)) throw new Error('Ingredient already exists');
       db.ingredients.push(ing); persist();
       return { content: [{ type: 'text', text: JSON.stringify(ing) }] };
     });
+  server.tool('list_history', 'List stock change history, newest first. Each entry can be undone.', {},
+    async () => ({ content: [{ type: 'text', text: JSON.stringify([...(db.history || [])].reverse()) }] }));
+  server.tool('undo_history', 'Undo a stock change history entry: restores stock, or un-completes a bake plan.', { id: z.string() },
+    async ({ id }) => ({ content: [{ type: 'text', text: JSON.stringify(undoHistory(id)) }] }));
   server.tool('list_recipes', 'List all recipes with per-portion ingredients.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(db.recipes) }] }));
   server.tool('get_recipe', 'Get one recipe by id or name.', { query: z.string() },
@@ -165,7 +234,7 @@ function createMcpServer() {
     name: z.string(), description: z.string().optional(), ingredients: z.array(z.object({ ingredientId: z.string(), qty: z.number(), unit: z.string() })),
   }, async ({ name, description, ingredients }) => {
     validateRecipeIngredients(ingredients);
-    const r = { id: slug(name), name, kind: 'base', description: description || '', yields: 1, yieldUnit: 'portions', ingredients };
+    const r = { businessId: BUSINESS_ID, id: slug(name), name, kind: 'base', description: description || '', yields: 1, yieldUnit: 'portions', packSize: 1, ingredients };
     db.recipes.push(r); persist();
     return { content: [{ type: 'text', text: JSON.stringify(r) }] };
   });
@@ -205,8 +274,8 @@ function createMcpServer() {
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
   server.tool('get_restock_forecast', 'Alias for get_shopping_list: weekly restock forecast for the Friday shop.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
-  server.tool('restock_ingredient', 'Restock one ingredient from the shopping list: enter the amount bought in any purchase unit and it is converted to the inventory unit and added to stock. E.g. instant coffee 200 g = 125 tsp (1 tsp = 1.6 g, BONCAFE, weighed), flour 1 kg = 1000 g, white sugar 1 bag = 3000 g, chocolate 1 bag = 2500 g, eggs 1 tray = 10 eggs.', { id: z.string(), amount: z.number(), unit: z.string() },
-    async ({ id, amount, unit }) => ({ content: [{ type: 'text', text: JSON.stringify(doRestock(id, amount, unit)) }] }));
+  server.tool('restock_ingredient', 'Restock one ingredient from the shopping list: enter the amount bought in any purchase unit and it is converted to the inventory unit and added to stock. E.g. instant coffee 200 g = 125 tsp (1 tsp = 1.6 g, BONCAFE, weighed), flour 1 kg = 1000 g, white sugar 1 bag = 3000 g, chocolate 1 bag = 2500 g, eggs 1 tray = 10 eggs. Optional price is the total SGD paid, which records the latest price per stock unit for bake cost tracking.', { id: z.string(), amount: z.number(), unit: z.string(), price: z.number().optional() },
+    async ({ id, amount, unit, price }) => ({ content: [{ type: 'text', text: JSON.stringify(doRestock(id, amount, unit, price)) }] }));
   server.tool('make_cookie_dough', 'Make cookie dough: 1 batch = 12 balls (usually 13, count as 12). Deduct the recipe once per batch, bake some cookies now, freeze the rest as balls. batchesMade (usually 1), cookiesBakedNow (0-12 per batch); balls frozen = batchesMade*12 - cookiesBakedNow. Legacy fields portionsMade / portionsBakedNow / portionsFrozen (in batches) are also accepted.', {
     batchesMade: z.number().optional(), cookiesBakedNow: z.number().optional(),
     portionsMade: z.number().optional(), portionsBakedNow: z.number().optional(), portionsFrozen: z.number().optional(),
@@ -240,8 +309,16 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && pathname === '/api/inventory') {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
-        const ing = { id: slug(b.name), name: b.name, unit: b.unit, current: round3(b.current), min: round3(b.min) };
+        const ing = { businessId: BUSINESS_ID, id: slug(b.name), name: b.name, unit: b.unit, current: round3(b.current), min: round3(b.min) };
+        if (db.ingredients.some(i => i.id === ing.id)) return send(res, 400, { error: 'Ingredient already exists' });
         db.ingredients.push(ing); persist(); return send(res, 201, ing);
+      }
+      if (req.method === 'GET' && pathname === '/api/history') return send(res, 200, [...(db.history || [])].reverse());
+      const historyMatch = pathname.match(/^\/api\/history\/([\w-]+)\/undo$/);
+      if (historyMatch && req.method === 'POST') {
+        if (!requireKey(req, res)) return;
+        try { return send(res, 200, undoHistory(historyMatch[1])); }
+        catch (e) { return send(res, 400, { error: e.message }); }
       }
       const invMatch = pathname.match(/^\/api\/inventory\/([\w-]+)$/);
       if (invMatch) {
@@ -250,10 +327,15 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'PATCH') {
           if (!requireKey(req, res)) return;
           const b = await readBody(req);
+          const before = ing.current;
           if (b.current !== undefined) ing.current = round3(b.current);
           if (b.min !== undefined) ing.min = round3(b.min);
           if (b.name) ing.name = b.name;
           if (b.unit) ing.unit = b.unit;
+          if (b.lastPrice !== undefined) ing.lastPrice = Number(b.lastPrice);
+          if (b.current !== undefined && ing.current !== before) {
+            logHistory({ type: 'inventory', ingredientId: ing.id, name: ing.name, before, after: ing.current, note: 'Manual stock adjustment' });
+          }
           persist(); return send(res, 200, ing);
         }
         if (req.method === 'DELETE') {
@@ -267,7 +349,7 @@ const server = http.createServer(async (req, res) => {
         const b = await readBody(req);
         try { validateRecipeIngredients(b.ingredients || []); }
         catch (e) { return send(res, 400, { error: e.message }); }
-        const r = { id: slug(b.name), name: b.name, kind: b.kind || 'base', description: b.description || '', yields: b.yields || 1, yieldUnit: b.yieldUnit || 'portions', ingredients: b.ingredients || [], components: b.components || [] };
+        const r = { businessId: BUSINESS_ID, id: slug(b.name), name: b.name, kind: b.kind || 'base', description: b.description || '', yields: b.yields || 1, yieldUnit: b.yieldUnit || 'portions', packSize: b.packSize || 1, sellPrice: b.sellPrice === undefined ? null : Number(b.sellPrice), ingredients: b.ingredients || [], components: b.components || [] };
         db.recipes.push(r); persist(); return send(res, 201, r);
       }
       const recipeMatch = pathname.match(/^\/api\/recipes\/([\w-]+)$/);
@@ -286,6 +368,8 @@ const server = http.createServer(async (req, res) => {
           if (b.kind) r.kind = b.kind;
           if (b.yields !== undefined) r.yields = b.yields;
           if (b.yieldUnit !== undefined) r.yieldUnit = b.yieldUnit;
+          if (b.packSize !== undefined) r.packSize = b.packSize;
+          if (b.sellPrice !== undefined) r.sellPrice = b.sellPrice === null ? null : Number(b.sellPrice);
           if (b.ingredients !== undefined) r.ingredients = b.ingredients;
           if (b.components !== undefined) r.components = b.components;
           persist(); return send(res, 200, r);
@@ -306,7 +390,7 @@ const server = http.createServer(async (req, res) => {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
         const dough = b.dough || (b.doughBatchesMade === undefined ? null : { batchesMade: b.doughBatchesMade });
-        const plan = { id: `plan-${Date.now()}`, name: b.name || 'Bake plan', date: b.date || new Date().toISOString().slice(0, 10), items: b.items || [], dough, status: 'planned', createdAt: new Date().toISOString() };
+        const plan = { businessId: BUSINESS_ID, id: `plan-${Date.now()}`, name: b.name || 'Bake plan', date: b.date || new Date().toISOString().slice(0, 10), items: b.items || [], dough, status: 'planned', createdAt: new Date().toISOString() };
         try {
           const calc = doPlan(plan.items, plan.dough);
           db.bakePlans.push(plan); persist(); return send(res, 201, { ...plan, calculation: calc });
@@ -351,7 +435,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && pathname === '/api/restock') {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
-        try { return send(res, 200, doRestock(b.ingredientId || b.id, b.amount, b.unit)); }
+        try { return send(res, 200, doRestock(b.ingredientId || b.id, b.amount, b.unit, b.price)); }
         catch (e) { return send(res, 400, { error: e.message }); }
       }
       if (req.method === 'GET' && pathname === '/api/shopping-list') return send(res, 200, doShoppingList());

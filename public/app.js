@@ -67,6 +67,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.getElementById('tab-' + b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'shopping') loadShopping();
   if (b.dataset.tab === 'planning') loadPlans();
+  if (b.dataset.tab === 'history') loadHistory();
 });
 
 async function loadAll() {
@@ -98,6 +99,13 @@ function renderInventory() {
       const ing = ingredients.find(x => x.id === inp.dataset.id);
       const name = ing ? ing.name : 'this ingredient';
       if (!confirm(`Set ${name} stock to 0? This will put it on the shopping list. Choose OK only if you are really out of ${name}.`)) { await loadAll(); return; }
+    }
+    if (inp.dataset.field === 'current') {
+      const ing = ingredients.find(x => x.id === inp.dataset.id);
+      const old = ing ? ing.current : 0;
+      if (old > 0 && (val > old * 1.5 || val < old * 0.5)) {
+        if (!confirm(`${ing.name}: ${fmt(old)} to ${fmt(val)} is a big change, more than 50%. Did you mean ${fmt(val)} ${ing.unit}, or did you type the wrong number or unit? Choose OK only if ${fmt(val)} is right.`)) { await loadAll(); return; }
+      }
     }
     await api('/api/inventory/' + inp.dataset.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [inp.dataset.field]: val }) });
     await loadAll();
@@ -142,6 +150,8 @@ function resetRecipeForm() {
   document.getElementById('new-recipe-desc').value = '';
   document.getElementById('new-recipe-yields').value = 1;
   document.getElementById('new-recipe-yield-unit').value = 'portions';
+  document.getElementById('new-recipe-pack-size').value = 1;
+  document.getElementById('new-recipe-sell-price').value = '';
   document.getElementById('recipe-ing-lines').innerHTML = '';
   addRecipeIngLine();
   document.getElementById('recipe-form').classList.add('hidden');
@@ -155,6 +165,8 @@ function editRecipe(id) {
   document.getElementById('new-recipe-desc').value = r.description || '';
   document.getElementById('new-recipe-yields').value = r.yields || 1;
   document.getElementById('new-recipe-yield-unit').value = r.yieldUnit || 'portions';
+  document.getElementById('new-recipe-pack-size').value = r.packSize || 1;
+  document.getElementById('new-recipe-sell-price').value = r.sellPrice === null || r.sellPrice === undefined ? '' : r.sellPrice;
   document.getElementById('recipe-ing-lines').innerHTML = '';
   (r.ingredients || []).forEach(i => addRecipeIngLine(i.ingredientId, i.qty, i.unit));
   if (!(r.ingredients || []).length) addRecipeIngLine();
@@ -172,7 +184,8 @@ document.getElementById('save-recipe').onclick = async () => {
     if (!i.qty || i.qty <= 0) { alert('Every ingredient needs a quantity more than 0.'); return; }
     if (!i.unit) { const ing = ingredients.find(x => x.id === i.ingredientId); i.unit = ing ? ing.unit : ''; }
   }
-  const body = { name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, yields: Number(document.getElementById('new-recipe-yields').value) || 1, yieldUnit: document.getElementById('new-recipe-yield-unit').value || 'portions', ingredients: ings };
+  const sellPrice = document.getElementById('new-recipe-sell-price').value;
+  const body = { name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, yields: Number(document.getElementById('new-recipe-yields').value) || 1, yieldUnit: document.getElementById('new-recipe-yield-unit').value || 'portions', packSize: Number(document.getElementById('new-recipe-pack-size').value) || 1, sellPrice: sellPrice === '' ? null : Number(sellPrice), ingredients: ings };
   if (editingRecipeId) {
     await api('/api/recipes/' + editingRecipeId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } else {
@@ -214,6 +227,7 @@ function showPlan(calc) {
   ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
   <h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
   ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this plan.</p>'}
+  ${calc.totalCost !== undefined ? `<h4>Cost</h4><p>${calc.missingPrices && calc.missingPrices.length ? `Cost is incomplete, no price recorded yet for: ${calc.missingPrices.join(', ')}. Add a price when you restock to see the full cost.` : ''}</p><p>Ingredient cost: $${calc.totalCost.toFixed(2)}${calc.totalSell ? `<br>Selling price: $${calc.totalSell.toFixed(2)}<br>Margin: $${calc.margin.toFixed(2)}` : '<br>Add a selling price to the recipe to see the margin.'}</p>` : ''}
   </div>`;
   const dough = planDough();
   if (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null && dough === undefined) {
@@ -300,8 +314,10 @@ async function loadShopping() {
     return `<div class="card" data-ingredient="${i.ingredientId}">
       <label><input type="checkbox" class="restock-bought"> Bought</label>
       <strong>${i.name}</strong> — Need ${fmt(i.need)} ${i.unit} (have ${fmt(i.have)}, min ${fmt(i.min)}) — ${i.reason}<br>
+      ${i.shortBeforeNextShop ? `<p class="warn">Short before the next shop${i.shortDate && i.shortDate !== 'now' ? `, on ${i.shortDate}` : ''}. Buy this sooner if you can.</p>` : (i.shortDate ? `<p class="hint">Runs short on ${i.shortDate}.</p>` : '')}
       <label>Bought <input type="number" class="restock-amount" value="${fmt(i.need)}" min="0" step="any" style="width:100px"></label>
       <select class="restock-unit">${units.map(u => `<option value="${u.unit}" data-per-unit="${u.perUnit}" ${u.unit === i.unit ? 'selected' : ''}>${u.label}</option>`).join('')}</select>
+      <label>Price paid (SGD, optional) <input type="number" class="restock-price" min="0" step="any" style="width:110px" placeholder="e.g. 12.50"></label>
       <p class="restock-preview hint"></p>
       <button class="restock-add" disabled>Add to inventory</button>
     </div>`;
@@ -341,7 +357,11 @@ async function loadShopping() {
       const added = Math.round(amount * perUnit * 1000) / 1000;
       if (!confirm(`Add ${fmt(amount)} ${unit} of ${item.name} to inventory? That is ${fmt(added)} ${item.unit}. Stock will go from ${fmt(item.have)} to ${fmt(Math.round((item.have + added) * 1000) / 1000)} ${item.unit}.`)) return;
       try {
-        const r = await api('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: item.ingredientId, amount, unit }) });
+        const priceEl = card.querySelector('.restock-price');
+        const price = priceEl && priceEl.value !== '' ? Number(priceEl.value) : undefined;
+        const body = { ingredientId: item.ingredientId, amount, unit };
+        if (price !== undefined) body.price = price;
+        const r = await api('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         alert(`Added ${fmt(r.added)} ${r.unit} of ${r.name}. Stock is now ${fmt(r.after)} ${r.unit}.`);
         await loadAll(); await loadShopping();
       } catch (e) { alert(e.message); }
@@ -350,6 +370,15 @@ async function loadShopping() {
 }
 document.getElementById('copy-list').onclick = async () => { const d = window._shopping; if (d) { await navigator.clipboard.writeText(d.items.map(i => `${i.name} — need ${fmt(i.need)} ${i.unit}`).join('\n')); alert('Copied'); } };
 document.getElementById('export-csv').onclick = () => window.open('/api/shopping-list.csv', '_blank');
+async function loadHistory() {
+  const list = await api('/api/history');
+  document.getElementById('history-list').innerHTML = list.map(e => `<div class="card"><strong>${e.type === 'bake-complete' ? 'Bake completed' : e.type === 'restock' ? 'Restocked' : 'Stock adjusted'}: ${e.name || ''}</strong><br><span class="hint">${new Date(e.at).toLocaleString('en-SG')}</span><br>${e.type === 'bake-complete' ? `Deducted: ${(e.deducted || []).map(t => `${fmt(t.qty)} ${t.unit} ${t.name}`).join(', ')}${e.ballsAdded ? `, froze ${fmt(e.ballsAdded)} balls` : ''}` : `${fmt(e.before)} to ${fmt(e.after)} ${e.unit || ''}${e.added ? `, added ${fmt(e.added)}` : ''}`}${e.undone ? ' — <span class="warn">undone</span>' : ` <button class="ghost small" onclick="undoHistory('${e.id}')">Undo</button>`}</div>`).join('') || '<p>No stock changes yet.</p>';
+}
+async function undoHistory(id) {
+  if (!confirm('Undo this change? Stock will be put back.')) return;
+  await api('/api/history/' + id + '/undo', { method: 'POST' });
+  await loadAll(); await loadHistory();
+}
 applyTheme();
 applyDashboard();
 loadAll();
