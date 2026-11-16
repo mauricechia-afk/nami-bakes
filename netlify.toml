@@ -1,0 +1,16 @@
+# Nami Bakes — Netlify config for the FRONTEND (static files in public/).
+# The frontend is a static site; the Node server (server.js) is the backend
+# and MCP server. It does NOT run on Netlify's static hosting.
+# Deploy the backend separately (see README "Deploy the backend") —
+# e.g. Railway / Render / Fly.io / a small VPS — and set the frontend's
+# API base URL in public/config.js at deploy time.
+# Do NOT add an /api proxy here until YOUR-BACKEND-URL is a real deployed
+# backend; a placeholder proxy would break the site.
+[build]
+  publish = "public"
+  command = "echo 'Static frontend — no build step'"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"

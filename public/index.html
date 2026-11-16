@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nami Bakes — Bakery Pro</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><h1>🥐 Bakery Pro</h1><p>Nami Bakes — Intelligent Kitchen Management System</p>
+<p class="sub">Data is saved on the server, so every device sees the same stock. Nothing is stored only in this browser.</p></header>
+<nav>
+  <button data-tab="inventory" class="active">Inventory</button>
+  <button data-tab="recipes">Recipes</button>
+  <button data-tab="planning">Batch Planning</button>
+  <button data-tab="shopping">Shopping List</button>
+</nav>
+<main>
+  <section id="tab-inventory" class="tab active">
+    <div class="row"><h2>Inventory Management</h2><button id="add-ingredient">+ Add Ingredient</button></div>
+    <p class="hint">Tap a quantity to adjust it. All quantities are editable.</p>
+    <div id="inventory-list"></div>
+    <div id="ingredient-form" class="card hidden">
+      <h3>Add ingredient</h3>
+      <input id="new-name" placeholder="Ingredient name">
+      <input id="new-unit" placeholder="Unit (g, tsp, eggs…)">
+      <input id="new-current" type="number" step="any" placeholder="Current quantity">
+      <input id="new-min" type="number" step="any" placeholder="Minimum stock">
+      <button id="save-ingredient">Add Ingredient</button>
+      <button id="cancel-ingredient" class="ghost">Cancel</button>
+    </div>
+  </section>
+
+  <section id="tab-recipes" class="tab">
+    <div class="row"><h2>Recipe Management</h2><button id="add-recipe">+ Add Recipe</button></div>
+    <div id="recipe-list"></div>
+    <div id="recipe-form" class="card hidden">
+      <h3>Add recipe (per portion)</h3>
+      <input id="new-recipe-name" placeholder="Recipe name">
+      <input id="new-recipe-desc" placeholder="Description / notes">
+      <p class="hint">Add ingredients as "Name: qty unit" — one per line, e.g. Flour: 195 g</p>
+      <textarea id="new-recipe-ings" rows="6" placeholder="Flour: 195 g&#10;Eggs: 1 eggs"></textarea>
+      <button id="save-recipe">Add Recipe</button>
+      <button id="cancel-recipe" class="ghost">Cancel</button>
+    </div>
+  </section>
+
+  <section id="tab-planning" class="tab">
+    <h2>Batch Planning</h2>
+    <div class="card">
+      <h3>Plan a bake</h3>
+      <p class="hint">Plan finished items — fractions allowed (e.g. 1.5). The app breaks them into base sub-recipes and shows each one scaled, for baking in one go.</p>
+      <div id="plan-lines"></div>
+      <button id="add-plan-line">+ Add item</button>
+      <button id="calc-plan">Calculate sub-recipes</button>
+      <div class="row"><input id="plan-name" placeholder="Plan name (e.g. Sat bakes)"><input id="plan-date" type="date"></div>
+      <button id="save-plan">Save plan</button>
+    </div>
+    <div id="plan-result"></div>
+    <div class="card">
+      <h3>Make cookie dough</h3>
+      <p class="hint">1 batch = 12 balls (usually 13, count as 12). Make a batch, bake some cookies now, and the rest become frozen Cookie Dough Balls in inventory.</p>
+      <label>Batches made <input id="dough-batches" type="number" value="1" min="1" step="1"></label>
+      <label>Cookies baked now <input id="dough-baked" type="number" value="6" min="0" step="1"></label>
+      <p id="dough-preview"></p>
+      <button id="make-dough">Make dough</button>
+    </div>
+    <h3>Saved plans</h3>
+    <div id="saved-plans"></div>
+  </section>
+
+  <section id="tab-shopping" class="tab">
+    <h2>Shopping List — Weekly Restock</h2>
+    <p id="friday-note" class="hint"></p>
+    <p class="hint">Flagged weekly: anything below minimum, plus what planned bakes will need. Maurice buys once a week on Friday.</p>
+    <div class="row"><button id="copy-list">Copy List</button><button id="export-csv">Export CSV</button></div>
+    <div id="shopping-list"></div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

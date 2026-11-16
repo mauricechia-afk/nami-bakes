@@ -1,0 +1,110 @@
+// Nami Bakes frontend. All data comes from the server API (/api/*).
+// Nothing about stock/recipes is stored in localStorage.
+const api = (p, opts) => fetch(p, opts).then(async r => { const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = { raw: t }; } if (!r.ok) throw new Error(j.error || t); return j; });
+const fmt = n => { const r = Math.round((Number(n) + Number.EPSILON) * 1000) / 1000; return String(r); };
+let ingredients = [], recipes = [], plans = [];
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  document.getElementById('tab-' + b.dataset.tab).classList.add('active');
+  if (b.dataset.tab === 'shopping') loadShopping();
+  if (b.dataset.tab === 'planning') loadPlans();
+});
+
+async function loadAll() {
+  ingredients = await api('/api/inventory');
+  recipes = await api('/api/recipes');
+  renderInventory(); renderRecipes(); renderPlanLines();
+}
+function renderInventory() {
+  document.getElementById('inventory-list').innerHTML = ingredients.map(i => {
+    const low = i.current <= i.min;
+    const pct = Math.min(100, i.current / Math.max(i.min * 3, 1) * 100);
+    return `<div class="card"><div class="row"><strong>${i.name}</strong><span>${low ? '<span class="warn">Below minimum</span>' : ''}</span></div>
+    <div>Current Stock: <input type="number" step="any" value="${i.current}" data-id="${i.id}" data-field="current" style="width:120px"> ${i.unit}</div>
+    <div>Min Stock: <input type="number" step="any" value="${i.min}" data-id="${i.id}" data-field="min" style="width:120px"> ${i.unit}</div>
+    <div class="bar ${low ? 'low' : ''}"><div style="width:${pct}%"></div></div>
+    <button class="ghost" onclick="deleteIngredient('${i.id}')">Delete</button></div>`;
+  }).join('');
+  document.querySelectorAll('#inventory-list input').forEach(inp => inp.onchange = async () => {
+    await api('/api/inventory/' + inp.dataset.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [inp.dataset.field]: Number(inp.value) }) });
+    await loadAll();
+  });
+}
+async function deleteIngredient(id) { if (confirm('Delete this ingredient?')) { await api('/api/inventory/' + id, { method: 'DELETE' }); await loadAll(); } }
+document.getElementById('add-ingredient').onclick = () => document.getElementById('ingredient-form').classList.remove('hidden');
+document.getElementById('cancel-ingredient').onclick = () => document.getElementById('ingredient-form').classList.add('hidden');
+document.getElementById('save-ingredient').onclick = async () => {
+  await api('/api/inventory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('new-name').value, unit: document.getElementById('new-unit').value, current: Number(document.getElementById('new-current').value), min: Number(document.getElementById('new-min').value) }) });
+  await loadAll();
+};
+function renderRecipes() {
+  document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`; }).join('')}</table></div>`).join('');
+}
+document.getElementById('add-recipe').onclick = () => document.getElementById('recipe-form').classList.remove('hidden');
+document.getElementById('cancel-recipe').onclick = () => document.getElementById('recipe-form').classList.add('hidden');
+document.getElementById('save-recipe').onclick = async () => {
+  const ings = document.getElementById('new-recipe-ings').value.split('\n').filter(Boolean).map(line => {
+    const m = line.match(/^(.*?):\s*([\d.]+)\s*(.*)$/); if (!m) return null;
+    const ing = ingredients.find(x => x.name.toLowerCase() === m[1].trim().toLowerCase());
+    return { ingredientId: ing ? ing.id : m[1].trim(), qty: Number(m[2]), unit: m[3] || '' };
+  }).filter(Boolean);
+  await api('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, ingredients: ings }) });
+  await loadAll();
+};
+function renderPlanLines() {
+  const el = document.getElementById('plan-lines');
+  if (!el.dataset.init) { el.dataset.init = '1'; addPlanLine(); addPlanLine(); }
+}
+function addPlanLine() {
+  const div = document.createElement('div'); div.className = 'row';
+  div.innerHTML = `<select>${recipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty">`;
+  document.getElementById('plan-lines').appendChild(div);
+}
+document.getElementById('add-plan-line').onclick = addPlanLine;
+function planItems() {
+  return [...document.querySelectorAll('#plan-lines .row')].map(row => ({ recipeId: row.querySelector('select').value, qty: Number(row.querySelector('input').value) })).filter(x => x.qty > 0);
+}
+function showPlan(calc) {
+  const el = document.getElementById('plan-result');
+  el.innerHTML = `<div class="card"><h3>Sub-recipes — make each in one go</h3>
+  ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
+  ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
+  <h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
+  ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this plan.</p>'}
+  </div>`;
+}
+document.getElementById('calc-plan').onclick = async () => showPlan(await api('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: planItems() }) }));
+document.getElementById('save-plan').onclick = async () => {
+  const plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || new Date().toISOString().slice(0, 10), items: planItems() }) });
+  showPlan(plan.calculation); await loadPlans();
+};
+async function loadPlans() {
+  plans = await api('/api/bake-plans');
+  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ')}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button>` : ''}</div>`).join('') || '<p>No bake plans yet.</p>';
+}
+async function completePlan(id) { await api('/api/bake-plans/' + id + '/complete', { method: 'POST' }); await loadAll(); await loadPlans(); }
+function updateDoughPreview() {
+  const batches = Number(document.getElementById('dough-batches').value), baked = Number(document.getElementById('dough-baked').value);
+  const total = batches * 12, frozen = total - baked;
+  document.getElementById('dough-preview').textContent = baked >= 0 && baked <= total
+    ? `${batches} ${batches === 1 ? 'batch' : 'batches'} = ${total} balls. Bake ${baked} now, freeze ${frozen} balls — ${frozen} Cookie Dough Balls added to inventory.`
+    : `Cookies baked now must be 0–${total} for ${batches} ${batches === 1 ? 'batch' : 'batches'}.`;
+}
+['dough-batches', 'dough-baked'].forEach(id => document.getElementById(id).oninput = updateDoughPreview);
+updateDoughPreview();
+document.getElementById('make-dough').onclick = async () => {
+  const r = await api('/api/make-dough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batchesMade: Number(document.getElementById('dough-batches').value), cookiesBakedNow: Number(document.getElementById('dough-baked').value) }) });
+  alert(`Dough made. ${r.ballsAdded} balls added to inventory.`); await loadAll();
+};
+async function loadShopping() {
+  const data = await api('/api/shopping-list');
+  document.getElementById('friday-note').textContent = 'Next Friday shop: ' + data.nextFriday;
+  document.getElementById('shopping-list').innerHTML = data.items.length ? data.items.map(i => `<div class="card"><strong>${i.name}</strong> — Need ${fmt(i.need)} ${i.unit} (have ${fmt(i.have)}, min ${fmt(i.min)}) — ${i.reason}</div>`).join('') : '<p>All stock levels are healthy.</p>';
+  window._shopping = data;
+}
+document.getElementById('copy-list').onclick = async () => { const d = window._shopping; if (d) { await navigator.clipboard.writeText(d.items.map(i => `${i.name} — need ${fmt(i.need)} ${i.unit}`).join('\n')); alert('Copied'); } };
+document.getElementById('export-csv').onclick = () => window.open('/api/shopping-list.csv', '_blank');
+loadAll();
