@@ -34,6 +34,7 @@ try {
   check('Brookie exists', recipes.some(r => r.id === 'brookie'));
   const doughRecipe = recipes.find(r => r.id === 'cookie-dough');
   check('Cookie dough yields 12 balls per batch', doughRecipe && doughRecipe.yields === 12 && doughRecipe.yieldUnit === 'balls', JSON.stringify(doughRecipe && { yields: doughRecipe.yields, yieldUnit: doughRecipe.yieldUnit }));
+  check('Cookie dough has 0.25 tsp instant coffee per batch (Maurice, 2026-11-16)', doughRecipe && eq(doughRecipe.ingredients.find(i => i.ingredientId === 'instant-coffee')?.qty, 0.25), JSON.stringify(doughRecipe && doughRecipe.ingredients));
 
   console.log('Plan A: 1 brookie + 1 brownie');
   const a = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }, { recipeId: 'brownies', qty: 1 }] }) });
@@ -146,11 +147,26 @@ try {
   check('Restock 1 tray eggs = 10 eggs, stock 5 + 10 = 15', restockEggs.added === 10 && eq(restockEggs.after, 15), JSON.stringify(restockEggs));
   const restockCoffee = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'instant-coffee', amount: 200, unit: 'g' }) });
   check('Restock 200g BONCAFE coffee = 125 tsp (1 tsp = 1.6g)', eq(restockCoffee.added, 125), JSON.stringify(restockCoffee));
-  check('Restock coffee stock 89.5 + 125 = 214.5 tsp', eq(restockCoffee.after, 214.5), JSON.stringify(restockCoffee));
+  check('Restock coffee stock 88 + 125 = 213 tsp', eq(restockCoffee.after, 213), JSON.stringify(restockCoffee));
   const restockFlour = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'flour', amount: 1, unit: 'kg' }) });
   check('Restock 1 kg flour = 1000g, stock 1125 + 1000 = 2125', eq(restockFlour.added, 1000) && eq(restockFlour.after, 2125), JSON.stringify(restockFlour));
   const restockBad = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'flour', amount: 1, unit: 'xyz' }) });
   check('Restock with unknown unit is refused', typeof restockBad.error === 'string' && restockBad.error.includes('Unknown purchase unit'), JSON.stringify(restockBad));
+
+  console.log('Recipe ingredient validation — unknown or misspelt ingredients are refused, not silently ignored');
+  const badRecipe = await j('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Bad recipe', ingredients: [{ ingredientId: 'vanila-extract', qty: 1, unit: 'tsp' }] }) });
+  check('Recipe with unknown ingredient is refused', typeof badRecipe.error === 'string' && badRecipe.error.includes('Unknown ingredient "vanila-extract"'), JSON.stringify(badRecipe));
+  const misspelt = await j('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Misspelt recipe', ingredients: [{ ingredientId: 'Instant Coffe', qty: 1, unit: 'tsp' }] }) });
+  check('Misspelt ingredient is refused', typeof misspelt.error === 'string' && misspelt.error.includes('Unknown ingredient'), JSON.stringify(misspelt));
+  const goodRecipe = await j('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Good test recipe', ingredients: [{ ingredientId: 'flour', qty: 100, unit: 'g' }] }) });
+  check('Recipe with an Inventory ingredient is accepted', goodRecipe.id === 'good-test-recipe', JSON.stringify(goodRecipe));
+  await j(`/api/recipes/${goodRecipe.id}`, { method: 'DELETE' });
+  const beforePatch = await j('/api/recipes');
+  const browniesBefore = beforePatch.find(r => r.id === 'brownies');
+  const badPatch = await j('/api/recipes/brownies', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredients: [{ ingredientId: 'cocoa', qty: 75, unit: 'g' }] }) });
+  check('Editing a recipe to an unknown ingredient is refused', typeof badPatch.error === 'string' && badPatch.error.includes('Unknown ingredient "cocoa"'), JSON.stringify(badPatch));
+  const afterPatch = await j('/api/recipes');
+  check('Refused edit did not change the recipe', JSON.stringify(afterPatch.find(r => r.id === 'brownies').ingredients) === JSON.stringify(browniesBefore.ingredients));
 
   console.log('MCP via HTTP');
   const mcpHeaders = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };

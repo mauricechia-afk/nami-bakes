@@ -45,6 +45,18 @@ function requireKey(req, res) {
 function slug(s) { return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
 // ---------- business operations (shared by REST + MCP) ----------
+function validateRecipeIngredients(ingredients) {
+  if (!Array.isArray(ingredients)) throw new Error('Recipe ingredients must be a list');
+  for (const ing of ingredients) {
+    if (!ing.ingredientId) throw new Error('Every recipe ingredient needs an ingredient from Inventory');
+    if (!db.ingredients.some(i => i.id === ing.ingredientId)) {
+      throw new Error(`Unknown ingredient "${ing.ingredientId}" — add it to Inventory first, then add it to the recipe.`);
+    }
+    if (!Number.isFinite(Number(ing.qty)) || Number(ing.qty) <= 0) {
+      throw new Error(`Ingredient "${ing.ingredientId}" needs a quantity more than 0`);
+    }
+  }
+}
 function doPlan(items, dough) {
   return planBake(items, db.recipes, db.ingredients, dough);
 }
@@ -149,9 +161,10 @@ function createMcpServer() {
       if (!r) throw new Error(`Recipe not found: ${query}`);
       return { content: [{ type: 'text', text: JSON.stringify(r) }] };
     });
-  server.tool('create_recipe', 'Create a recipe. ingredients: [{ingredientId, qty, unit}] per portion.', {
+  server.tool('create_recipe', 'Create a recipe. ingredients: [{ingredientId, qty, unit}] per portion. Every ingredientId must already exist in Inventory — add a new ingredient to Inventory first.', {
     name: z.string(), description: z.string().optional(), ingredients: z.array(z.object({ ingredientId: z.string(), qty: z.number(), unit: z.string() })),
   }, async ({ name, description, ingredients }) => {
+    validateRecipeIngredients(ingredients);
     const r = { id: slug(name), name, kind: 'base', description: description || '', yields: 1, yieldUnit: 'portions', ingredients };
     db.recipes.push(r); persist();
     return { content: [{ type: 'text', text: JSON.stringify(r) }] };
@@ -252,6 +265,8 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && pathname === '/api/recipes') {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
+        try { validateRecipeIngredients(b.ingredients || []); }
+        catch (e) { return send(res, 400, { error: e.message }); }
         const r = { id: slug(b.name), name: b.name, kind: b.kind || 'base', description: b.description || '', yields: b.yields || 1, yieldUnit: b.yieldUnit || 'portions', ingredients: b.ingredients || [], components: b.components || [] };
         db.recipes.push(r); persist(); return send(res, 201, r);
       }
@@ -262,6 +277,10 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'PATCH') {
           if (!requireKey(req, res)) return;
           const b = await readBody(req);
+          if (b.ingredients !== undefined) {
+            try { validateRecipeIngredients(b.ingredients); }
+            catch (e) { return send(res, 400, { error: e.message }); }
+          }
           if (b.name) r.name = b.name;
           if (b.description !== undefined) r.description = b.description;
           if (b.kind) r.kind = b.kind;

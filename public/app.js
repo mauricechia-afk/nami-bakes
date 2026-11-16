@@ -56,6 +56,26 @@ let editingRecipeId = null;
 function renderRecipes() {
   document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`; }).join('')}</table><div class="row" style="margin-top:10px"><button class="ghost small" onclick="editRecipe('${r.id}')">Edit recipe</button><button class="danger small" onclick="deleteRecipe('${r.id}')">Delete</button></div></div>`).join('');
 }
+function addRecipeIngLine(ingredientId, qty, unit) {
+  const div = document.createElement('div'); div.className = 'row recipe-ing-line';
+  const known = ingredients.find(x => x.id === ingredientId);
+  const unknownOpt = (!known && ingredientId) ? `<option value="${ingredientId}" selected>${ingredientId} (not in Inventory)</option>` : '';
+  div.innerHTML = `<select style="flex:2"><option value="">Pick an ingredient</option>${unknownOpt}${ingredients.map(x => `<option value="${x.id}" ${x.id === ingredientId ? 'selected' : ''}>${x.name}</option>`).join('')}</select><input type="number" step="any" min="0" value="${qty ?? ''}" style="width:90px" placeholder="Qty"><input type="text" value="${unit ?? ''}" style="width:70px" placeholder="Unit"><button type="button" class="ghost small remove-ing">Remove</button>`;
+  const select = div.querySelector('select'), unitEl = div.querySelectorAll('input')[1];
+  select.onchange = () => {
+    const ing = ingredients.find(x => x.id === select.value);
+    if (ing && !unitEl.value) unitEl.value = ing.unit;
+  };
+  div.querySelector('.remove-ing').onclick = () => div.remove();
+  document.getElementById('recipe-ing-lines').appendChild(div);
+}
+function collectRecipeIngs() {
+  return [...document.querySelectorAll('#recipe-ing-lines .recipe-ing-line')].map(row => {
+    const [qtyEl, unitEl] = row.querySelectorAll('input');
+    return { ingredientId: row.querySelector('select').value, qty: Number(qtyEl.value), unit: unitEl.value.trim() };
+  });
+}
+document.getElementById('add-recipe-ing').onclick = () => addRecipeIngLine();
 function resetRecipeForm() {
   editingRecipeId = null;
   document.getElementById('recipe-form-title').textContent = 'Add recipe (per portion)';
@@ -64,7 +84,8 @@ function resetRecipeForm() {
   document.getElementById('new-recipe-desc').value = '';
   document.getElementById('new-recipe-yields').value = 1;
   document.getElementById('new-recipe-yield-unit').value = 'portions';
-  document.getElementById('new-recipe-ings').value = '';
+  document.getElementById('recipe-ing-lines').innerHTML = '';
+  addRecipeIngLine();
   document.getElementById('recipe-form').classList.add('hidden');
 }
 function editRecipe(id) {
@@ -76,7 +97,9 @@ function editRecipe(id) {
   document.getElementById('new-recipe-desc').value = r.description || '';
   document.getElementById('new-recipe-yields').value = r.yields || 1;
   document.getElementById('new-recipe-yield-unit').value = r.yieldUnit || 'portions';
-  document.getElementById('new-recipe-ings').value = (r.ingredients || []).map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `${ing ? ing.name : i.ingredientId}: ${fmt(i.qty)} ${i.unit}`; }).join('\n');
+  document.getElementById('recipe-ing-lines').innerHTML = '';
+  (r.ingredients || []).forEach(i => addRecipeIngLine(i.ingredientId, i.qty, i.unit));
+  if (!(r.ingredients || []).length) addRecipeIngLine();
   document.getElementById('recipe-form').classList.remove('hidden');
   document.getElementById('recipe-form').scrollIntoView({ behavior: 'smooth' });
 }
@@ -84,11 +107,13 @@ async function deleteRecipe(id) { const r = recipes.find(x => x.id === id); if (
 document.getElementById('add-recipe').onclick = () => { resetRecipeForm(); document.getElementById('recipe-form').classList.remove('hidden'); };
 document.getElementById('cancel-recipe').onclick = resetRecipeForm;
 document.getElementById('save-recipe').onclick = async () => {
-  const ings = document.getElementById('new-recipe-ings').value.split('\n').filter(Boolean).map(line => {
-    const m = line.match(/^(.*?):\s*([\d.]+)\s*(.*)$/); if (!m) return null;
-    const ing = ingredients.find(x => x.name.toLowerCase() === m[1].trim().toLowerCase());
-    return { ingredientId: ing ? ing.id : m[1].trim(), qty: Number(m[2]), unit: m[3] || '' };
-  }).filter(Boolean);
+  const ings = collectRecipeIngs().filter(i => i.ingredientId || i.qty);
+  for (const i of ings) {
+    if (!i.ingredientId) { alert('Pick an ingredient for every row, or remove the empty row.'); return; }
+    if (!ingredients.some(x => x.id === i.ingredientId)) { alert(`"${i.ingredientId}" is not in Inventory. Add it to Inventory first, then add it to the recipe.`); return; }
+    if (!i.qty || i.qty <= 0) { alert('Every ingredient needs a quantity more than 0.'); return; }
+    if (!i.unit) { const ing = ingredients.find(x => x.id === i.ingredientId); i.unit = ing ? ing.unit : ''; }
+  }
   const body = { name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, yields: Number(document.getElementById('new-recipe-yields').value) || 1, yieldUnit: document.getElementById('new-recipe-yield-unit').value || 'portions', ingredients: ings };
   if (editingRecipeId) {
     await api('/api/recipes/' + editingRecipeId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

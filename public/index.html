@@ -47,8 +47,9 @@
       <input id="new-recipe-name" placeholder="Recipe name">
       <input id="new-recipe-desc" placeholder="Description / notes">
       <div class="row"><label style="flex:1">Yields <input id="new-recipe-yields" type="number" step="any" min="0" value="1"></label><label style="flex:1">Yield unit <input id="new-recipe-yield-unit" placeholder="portions, balls, brookie" value="portions"></label></div>
-      <p class="hint">Add ingredients as "Name: qty unit" — one per line, e.g. Flour: 195 g</p>
-      <textarea id="new-recipe-ings" rows="6" placeholder="Flour: 195 g&#10;Eggs: 1 eggs"></textarea>
+      <p class="hint">Pick each ingredient from your Inventory. If an ingredient is not listed, add it to Inventory first, then come back here.</p>
+      <div id="recipe-ing-lines"></div>
+      <button id="add-recipe-ing" class="ghost" type="button">+ Add ingredient</button>
       <button id="save-recipe">Add Recipe</button>
       <button id="cancel-recipe" class="ghost">Cancel</button>
     </div>
