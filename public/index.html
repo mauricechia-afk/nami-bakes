@@ -8,9 +8,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<script>try { if (localStorage.getItem('mep-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {}</script>
 </head>
 <body>
 <header>
+<div class="header-controls">
+<button id="dashboard-toggle" class="header-btn" type="button">Dashboard: On</button>
+<button id="theme-toggle" class="header-btn" type="button">Dark mode</button>
+</div>
 <p class="eyebrow">Nami Bakes</p>
 <h1>Mise en Place</h1>
 <p class="tagline">Intelligent Kitchen Management System</p>
@@ -23,6 +28,9 @@
   <button data-tab="shopping">Shopping List</button>
 </nav>
 <main>
+  <section id="dashboard">
+    <div id="dashboard-cards" class="dash-grid"></div>
+  </section>
   <section id="tab-inventory" class="tab active">
     <div class="row"><h2>Inventory Management</h2><button id="add-ingredient">+ Add Ingredient</button></div>
     <p class="hint">Tap a quantity to adjust it. All quantities are editable.</p>

@@ -4,6 +4,42 @@ const api = (p, opts) => fetch(p, opts).then(async r => { const t = await r.text
 const fmt = n => { const r = Math.round((Number(n) + Number.EPSILON) * 1000) / 1000; return String(r); };
 let ingredients = [], recipes = [], plans = [];
 
+// Theme and dashboard are per-browser display preferences, saved in
+// localStorage. Stock, recipes and plans are server data, never stored here.
+function applyTheme() {
+  const dark = (localStorage.getItem('mep-theme') || 'light') === 'dark';
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.getElementById('theme-toggle').textContent = dark ? 'Light mode' : 'Dark mode';
+}
+function applyDashboard() {
+  const on = (localStorage.getItem('mep-dashboard') || 'on') === 'on';
+  document.getElementById('dashboard').style.display = on ? '' : 'none';
+  document.getElementById('dashboard-toggle').textContent = on ? 'Dashboard: On' : 'Dashboard: Off';
+  if (on) renderDashboard();
+}
+document.getElementById('theme-toggle').onclick = () => {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  localStorage.setItem('mep-theme', dark ? 'light' : 'dark');
+  applyTheme();
+};
+document.getElementById('dashboard-toggle').onclick = () => {
+  const on = document.getElementById('dashboard').style.display !== 'none';
+  localStorage.setItem('mep-dashboard', on ? 'off' : 'on');
+  applyDashboard();
+};
+function renderDashboard() {
+  const balls = ingredients.find(i => i.id === 'cookie-dough-balls');
+  const low = ingredients.filter(i => i.min > 0 && i.current <= i.min * 1.5);
+  const below = low.filter(i => i.current <= i.min);
+  const next = plans.filter(p => p.status === 'planned').sort((a, b) => (a.date || '').localeCompare(b.date || ''))[0];
+  const closest = [...ingredients].filter(i => i.min > 0).sort((a, b) => (a.current / a.min) - (b.current / b.min)).slice(0, 2);
+  document.getElementById('dashboard-cards').innerHTML = `
+  <div class="dash-card"><h3>Cookie dough balls</h3><div class="big">${balls ? fmt(balls.current) : '0'}</div><p>frozen, ready to bake</p></div>
+  <div class="dash-card"><h3>Low stock</h3><div class="big">${low.length}</div><p>${low.length ? low.map(i => `${i.name}${i.current <= i.min ? ' (below min)' : ''}`).join(', ') : 'All stock healthy'}</p></div>
+  <div class="dash-card"><h3>Next bake</h3><div class="big" style="font-size:22px">${next ? next.name : 'None planned'}</div><p>${next ? `${next.date} — ${next.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ')}` : 'Plan one in Batch Planning'}</p></div>
+  <div class="dash-card"><h3>Closest to minimum</h3><div class="big" style="font-size:22px">${closest.map(i => i.name).join(' · ')}</div><p>${closest.map(i => `${i.name}: ${fmt(i.current)} / min ${fmt(i.min)} ${i.unit}`).join('<br>')}</p></div>`;
+}
+
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
@@ -17,6 +53,8 @@ async function loadAll() {
   ingredients = await api('/api/inventory');
   recipes = await api('/api/recipes');
   renderInventory(); renderRecipes(); renderPlanLines();
+  try { await loadPlans(); } catch (e) {}
+  renderDashboard();
 }
 function renderInventory() {
   document.getElementById('inventory-list').innerHTML = ingredients.map(i => {
@@ -292,4 +330,6 @@ async function loadShopping() {
 }
 document.getElementById('copy-list').onclick = async () => { const d = window._shopping; if (d) { await navigator.clipboard.writeText(d.items.map(i => `${i.name} — need ${fmt(i.need)} ${i.unit}`).join('\n')); alert('Copied'); } };
 document.getElementById('export-csv').onclick = () => window.open('/api/shopping-list.csv', '_blank');
+applyTheme();
+applyDashboard();
 loadAll();

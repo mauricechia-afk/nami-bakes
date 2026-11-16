@@ -186,6 +186,13 @@ try {
   console.log('Frontend');
   const html = await j('/');
   check('Frontend serves index', typeof html === 'string' && html.includes('Mise en Place'));
+  check('Frontend has a toggleable dashboard', html.includes('id="dashboard"') && html.includes('id="dashboard-toggle"') && html.includes('id="dashboard-cards"'));
+  check('Frontend has a dark mode toggle', html.includes('id="theme-toggle"'));
+  const css = await j('/style.css');
+  check('Dark mode styles exist', css.includes('[data-theme="dark"]'));
+  check('Polished cards and background texture', css.includes('radial-gradient') && css.includes('border-radius:22px') && css.includes('0 12px 28px'));
+  const js = await j('/app.js');
+  check('Dashboard and theme choices persist in localStorage', js.includes("localStorage.getItem('mep-theme')") && js.includes("localStorage.getItem('mep-dashboard')"));
 } catch (e) {
   fail++; console.log('  FAIL exception', e);
 } finally {
