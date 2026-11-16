@@ -182,6 +182,14 @@ try {
   check('Bake cost lists ingredients with no price yet', costPlan.missingPrices.includes('Flour'));
   await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
 
+  console.log('Backup — full export and restore');
+  const backup = await j('/api/backup');
+  check('Backup contains ingredients, recipes, plans and history', Array.isArray(backup.ingredients) && Array.isArray(backup.recipes) && Array.isArray(backup.bakePlans) && Array.isArray(backup.history));
+  const restored = await j('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) });
+  check('Restoring a backup round-trips', restored.ok === true && restored.ingredients === 15, JSON.stringify(restored));
+  const js3 = await j('/app.js');
+  check('Frontend sends the shared password header and has a lock screen', js3.includes('x-api-key') && js3.includes('lock-screen'));
+
   console.log('Interactive restock — buy in a different unit, converted to inventory unit');
   const shop2 = await j('/api/shopping-list');
   const eggsItem = shop2.items.find(i => i.ingredientId === 'eggs');

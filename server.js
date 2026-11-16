@@ -305,6 +305,23 @@ const server = http.createServer(async (req, res) => {
     // REST API
     if (pathname.startsWith('/api/')) {
       if (req.method === 'GET' && pathname === '/api/health') return send(res, 200, { ok: true, app: 'nami-bakes', version: '1.0.0' });
+      // When a shared password is set (NAMI_API_KEY), every API route needs
+      // it, including reads. The frontend sends it once the user unlocks.
+      if (API_KEY && req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: 'Locked. Enter the shared password to unlock.' });
+      if (req.method === 'GET' && pathname === '/api/backup') return send(res, 200, db);
+      if (req.method === 'POST' && pathname === '/api/backup') {
+        const b = await readBody(req);
+        if (!Array.isArray(b.ingredients) || !Array.isArray(b.recipes) || !Array.isArray(b.bakePlans)) {
+          return send(res, 400, { error: 'Backup file is not a valid Mise en Place backup. It must contain ingredients, recipes and bake plans.' });
+        }
+        db.ingredients = b.ingredients;
+        db.recipes = b.recipes;
+        db.bakePlans = b.bakePlans;
+        if (Array.isArray(b.history)) db.history = b.history;
+        if (Array.isArray(b.doughBatches)) db.doughBatches = b.doughBatches;
+        persist();
+        return send(res, 200, { ok: true, ingredients: db.ingredients.length, recipes: db.recipes.length, bakePlans: db.bakePlans.length });
+      }
       if (req.method === 'GET' && pathname === '/api/inventory') return send(res, 200, db.ingredients);
       if (req.method === 'POST' && pathname === '/api/inventory') {
         if (!requireKey(req, res)) return;

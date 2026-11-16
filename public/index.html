@@ -97,7 +97,18 @@
     <h2>Stock History</h2>
     <p class="hint">Every stock change, newest first. Undo puts the stock back, or un-completes a bake plan and puts its ingredients back.</p>
     <div id="history-list"></div>
+    <h2>Backup</h2>
+    <p class="hint">Download a full copy of your stock, recipes, plans and history. If anything ever goes wrong, restore it from the file.</p>
+    <div class="row"><button id="download-backup">Download backup</button><label>Restore backup <input id="restore-backup" type="file" accept="application/json"></label></div>
   </section>
+
+  <div id="lock-screen" style="display:none; position:fixed; inset:0; background:var(--bg); z-index:10; padding:40px 20px; text-align:center">
+    <h2>Mise en Place is locked</h2>
+    <p>Enter the shared password to unlock. It is remembered on this device, so you only do this once per device.</p>
+    <input id="lock-password" type="password" placeholder="Shared password" style="padding:10px; font-size:16px">
+    <button id="lock-unlock">Unlock</button>
+    <p id="lock-error" class="warn"></p>
+  </div>
 </main>
 <script src="app.js"></script>
 </body>

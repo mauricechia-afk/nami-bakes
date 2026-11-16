@@ -1,6 +1,37 @@
 // Nami Bakes frontend. All data comes from the server API (/api/*).
-// Nothing about stock/recipes is stored in localStorage.
-const api = (p, opts) => fetch(p, opts).then(async r => { const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = { raw: t }; } if (!r.ok) throw new Error(j.error || t); return j; });
+// Nothing about stock/recipes is stored in localStorage, except the shared
+// password, which is remembered on this device so unlocking is a one-time
+// step per device, not per visit.
+const api = (p, opts = {}) => {
+  const key = localStorage.getItem('mep-api-key');
+  const headers = { ...(opts.headers || {}) };
+  if (key) headers['x-api-key'] = key;
+  return fetch(p, { ...opts, headers }).then(async r => { const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = { raw: t }; } if (!r.ok) { const e = new Error(j.error || t); e.status = r.status; throw e; } return j; });
+};
+function showLock() { document.getElementById('lock-screen').style.display = ''; document.getElementById('lock-error').textContent = ''; }
+async function unlock() {
+  const key = document.getElementById('lock-password').value;
+  if (!key) return;
+  localStorage.setItem('mep-api-key', key);
+  try { await loadAll(); document.getElementById('lock-screen').style.display = 'none'; }
+  catch (e) { localStorage.removeItem('mep-api-key'); document.getElementById('lock-error').textContent = 'Wrong password, try again.'; }
+}
+async function downloadBackup() {
+  const data = await api('/api/backup');
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `mise-en-place-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+}
+async function restoreBackup(file) {
+  if (!file) return;
+  if (!confirm('Restore this backup? It will replace all current stock, recipes, plans and history.')) return;
+  const data = JSON.parse(await file.text());
+  const r = await api('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  alert(`Backup restored: ${r.ingredients} ingredients, ${r.recipes} recipes, ${r.bakePlans} bake plans.`);
+  await loadAll(); await loadHistory();
+}
 const fmt = n => { const r = Math.round((Number(n) + Number.EPSILON) * 1000) / 1000; return String(r); };
 let ingredients = [], recipes = [], plans = [];
 
@@ -71,8 +102,13 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 });
 
 async function loadAll() {
-  ingredients = await api('/api/inventory');
-  recipes = await api('/api/recipes');
+  try {
+    ingredients = await api('/api/inventory');
+    recipes = await api('/api/recipes');
+  } catch (e) {
+    if (e.status === 401) { showLock(); throw e; }
+    throw e;
+  }
   renderInventory(); renderRecipes(); renderPlanLines();
   try { await loadPlans(); } catch (e) {}
   renderDashboard();
@@ -379,6 +415,10 @@ async function undoHistory(id) {
   await api('/api/history/' + id + '/undo', { method: 'POST' });
   await loadAll(); await loadHistory();
 }
+document.getElementById('lock-unlock').onclick = unlock;
+document.getElementById('lock-password').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
+document.getElementById('download-backup').onclick = downloadBackup;
+document.getElementById('restore-backup').onchange = e => restoreBackup(e.target.files[0]);
 applyTheme();
 applyDashboard();
-loadAll();
+loadAll().catch(() => {}); // a 401 here just shows the lock screen
