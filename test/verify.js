@@ -138,6 +138,14 @@ try {
   const csv = await j('/api/shopping-list.csv');
   check('CSV export contains Eggs', typeof csv === 'string' && csv.includes('Eggs'));
 
+  console.log('Shopping list formula — buy = max(0, planned need + min - current)');
+  await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 20 }) });
+  const formulaPlan = await j('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Formula test', date: '2026-11-21', items: [{ recipeId: 'brownies', qty: 5 }] }) });
+  const shopFormula = await j('/api/shopping-list');
+  check('Eggs: stock 20, min 10, planned 15 -> buy 5, not 15 and not 0', eq(shopFormula.items.find(i => i.ingredientId === 'eggs')?.need, 5), JSON.stringify(shopFormula.items.find(i => i.ingredientId === 'eggs')));
+  await j(`/api/bake-plans/${formulaPlan.id}`, { method: 'DELETE' });
+  await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
+
   console.log('Interactive restock — buy in a different unit, converted to inventory unit');
   const shop2 = await j('/api/shopping-list');
   const eggsItem = shop2.items.find(i => i.ingredientId === 'eggs');
