@@ -478,4 +478,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`Nami Bakes running at http://localhost:${PORT} — MCP at http://localhost:${PORT}/mcp`));
+// Log the reason before exiting, so a crash shows up in the Railway
+// deploy log instead of failing silently. Railway restarts the service
+// after a crash, which is why a deploy looks crashed and then recovers.
+process.on('uncaughtException', (err) => { console.error('Uncaught exception:', err); process.exit(1); });
+process.on('unhandledRejection', (err) => { console.error('Unhandled rejection:', err); process.exit(1); });
+
+server.listen(PORT, '0.0.0.0', () => console.log(`Nami Bakes running at http://localhost:${PORT} — MCP at http://localhost:${PORT}/mcp`));
