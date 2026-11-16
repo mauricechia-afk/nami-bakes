@@ -60,6 +60,18 @@ try {
   const s = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }] }) });
   check('Single brookie total eggs = 2.5', eq(s.totals.find(t => t.ingredientId === 'eggs')?.qty, 2.5));
 
+  console.log('Merged dough: Peishi case — 1 brookie + 1 brownie, make 2 batches of dough');
+  const p = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }, { recipeId: 'brownies', qty: 1 }], doughBatchesMade: 2 }) });
+  check('Peishi dough used = 0.5 batch', eq(p.doughUsed, 0.5), `got ${p.doughUsed}`);
+  check('Peishi dough made = 2 batches', eq(p.doughBatchesMade, 2), `got ${p.doughBatchesMade}`);
+  check('Peishi balls frozen = 18', eq(p.ballsAdded, 18), `got ${p.ballsAdded}`);
+  check('Peishi total eggs = 7 (5 brownie + 2 dough)', eq(p.totals.find(t => t.ingredientId === 'eggs')?.qty, 7), `got ${p.totals.find(t => t.ingredientId === 'eggs')?.qty}`);
+  check('Peishi cookie flour = 390g (2 batches)', eq(p.subRecipes.find(sr => sr.recipeId === 'cookie-dough').ingredients.find(i => i.ingredientId === 'flour')?.qty, 390));
+  const pBad = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }], doughBatchesMade: 0 }) });
+  check('Too little dough is refused', typeof pBad.error === 'string' && pBad.error.includes('Not enough cookie dough'), JSON.stringify(pBad));
+  const pDoughOnly = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [], doughBatchesMade: 1 }) });
+  check('Dough only: 1 batch freezes 12 balls', eq(pDoughOnly.ballsAdded, 12), `got ${pDoughOnly.ballsAdded}`);
+
   console.log('Inventory adjust');
   const adj = await j('/api/inventory/flour', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 2000 }) });
   check('Adjust flour to 2000', eq(adj.current, 2000));
@@ -94,6 +106,16 @@ try {
   const inv4 = await j('/api/inventory');
   check('Legacy: balls stock now 45 + 12 = 57', eq(inv4.find(i => i.id === 'cookie-dough-balls')?.current, 57), `got ${inv4.find(i => i.id === 'cookie-dough-balls')?.current}`);
 
+  console.log('Merged dough: complete a saved Peishi plan (1 brookie + 1 brownie, 2 batches dough)');
+  const saved = await j('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Peishi test', items: [{ recipeId: 'brookie', qty: 1 }, { recipeId: 'brownies', qty: 1 }], doughBatchesMade: 2 }) });
+  check('Saved plan stores dough 2 batches', saved.dough && eq(saved.dough.batchesMade, 2), JSON.stringify(saved.dough));
+  const done = await j(`/api/bake-plans/${saved.id}/complete`, { method: 'POST' });
+  check('Complete reports 18 balls added', done.ballsAdded === 18, `got ${done.ballsAdded}`);
+  const inv5 = await j('/api/inventory');
+  check('Complete: balls now 57 + 18 = 75', eq(inv5.find(i => i.id === 'cookie-dough-balls')?.current, 75), `got ${inv5.find(i => i.id === 'cookie-dough-balls')?.current}`);
+  check('Complete: flour now 1620 - 495 = 1125', eq(inv5.find(i => i.id === 'flour')?.current, 1125), `got ${inv5.find(i => i.id === 'flour')?.current}`);
+  check('Complete: eggs now 18 - 7 = 11', eq(inv5.find(i => i.id === 'eggs')?.current, 11), `got ${inv5.find(i => i.id === 'eggs')?.current}`);
+
   console.log('Shopping list (set Eggs to 5, below min 10, should be flagged)');
   await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
   const shop = await j('/api/shopping-list');
@@ -102,6 +124,21 @@ try {
   check('Next Friday is a Friday', new Date(shop.nextFriday).getDay() === 5, shop.nextFriday);
   const csv = await j('/api/shopping-list.csv');
   check('CSV export contains Eggs', typeof csv === 'string' && csv.includes('Eggs'));
+
+  console.log('Interactive restock — buy in a different unit, converted to inventory unit');
+  const shop2 = await j('/api/shopping-list');
+  const eggsItem = shop2.items.find(i => i.ingredientId === 'eggs');
+  check('Shopping list eggs offers tray (10)', eggsItem && eggsItem.purchaseUnits.some(u => u.unit === 'tray' && u.perUnit === 10), JSON.stringify(eggsItem && eggsItem.purchaseUnits));
+  check('Shopping list has no Cookie Dough Balls (made, not bought)', !shop2.items.some(i => i.ingredientId === 'cookie-dough-balls'));
+  const restockEggs = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'eggs', amount: 1, unit: 'tray' }) });
+  check('Restock 1 tray eggs = 10 eggs, stock 5 + 10 = 15', restockEggs.added === 10 && eq(restockEggs.after, 15), JSON.stringify(restockEggs));
+  const restockCoffee = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'instant-coffee', amount: 200, unit: 'g' }) });
+  check('Restock 200g BONCAFE coffee = 125 tsp (1 tsp = 1.6g)', eq(restockCoffee.added, 125), JSON.stringify(restockCoffee));
+  check('Restock coffee stock 89.5 + 125 = 214.5 tsp', eq(restockCoffee.after, 214.5), JSON.stringify(restockCoffee));
+  const restockFlour = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'flour', amount: 1, unit: 'kg' }) });
+  check('Restock 1 kg flour = 1000g, stock 1125 + 1000 = 2125', eq(restockFlour.added, 1000) && eq(restockFlour.after, 2125), JSON.stringify(restockFlour));
+  const restockBad = await j('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: 'flour', amount: 1, unit: 'xyz' }) });
+  check('Restock with unknown unit is refused', typeof restockBad.error === 'string' && restockBad.error.includes('Unknown purchase unit'), JSON.stringify(restockBad));
 
   console.log('MCP via HTTP');
   const mcpHeaders = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
@@ -120,7 +157,7 @@ try {
 
   console.log('Frontend');
   const html = await j('/');
-  check('Frontend serves index', typeof html === 'string' && html.includes('Bakery Pro'));
+  check('Frontend serves index', typeof html === 'string' && html.includes('Mise en Place'));
 } catch (e) {
   fail++; console.log('  FAIL exception', e);
 } finally {

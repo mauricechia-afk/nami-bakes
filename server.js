@@ -14,7 +14,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { load, save } from './lib/store.js';
-import { fmtQty, round3, brownieEggs, planBake, makeCookieDough, shoppingList, nextFriday } from './lib/calc.js';
+import { fmtQty, round3, brownieEggs, planBake, makeCookieDough, shoppingList, nextFriday, purchaseUnitsFor, convertPurchase } from './lib/calc.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -45,14 +45,14 @@ function requireKey(req, res) {
 function slug(s) { return String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
 // ---------- business operations (shared by REST + MCP) ----------
-function doPlan(items) {
-  return planBake(items, db.recipes, db.ingredients);
+function doPlan(items, dough) {
+  return planBake(items, db.recipes, db.ingredients, dough);
 }
 function doCompleteBake(planId) {
   const plan = db.bakePlans.find(p => p.id === planId);
   if (!plan) throw new Error('Bake plan not found');
   if (plan.status === 'completed') throw new Error('Bake plan already completed');
-  const calc = doPlan(plan.items);
+  const calc = doPlan(plan.items, plan.dough);
   if (calc.insufficient.length) {
     throw new Error('Not enough stock: ' + calc.insufficient.map(i => `${i.name} needs ${fmtQty(i.qty)} ${i.unit}, have ${fmtQty(i.have)}`).join('; '));
   }
@@ -60,10 +60,14 @@ function doCompleteBake(planId) {
     const ing = db.ingredients.find(i => i.id === t.ingredientId);
     if (ing) ing.current = round3(ing.current - t.qty);
   }
+  if (calc.ballsAdded > 0) {
+    const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
+    if (balls) balls.current = round3(balls.current + calc.ballsAdded);
+  }
   plan.status = 'completed';
   plan.completedAt = new Date().toISOString();
   persist();
-  return { plan, deducted: calc.totals };
+  return { plan, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0 };
 }
 function doMakeDough(input) {
   const result = makeCookieDough(input, db.recipes, db.ingredients);
@@ -85,12 +89,27 @@ function doMakeDough(input) {
 function doShoppingList() {
   const plannedTotals = [];
   for (const plan of db.bakePlans.filter(p => p.status === 'planned')) {
-    for (const t of doPlan(plan.items).totals) {
+    for (const t of doPlan(plan.items, plan.dough).totals) {
       const ex = plannedTotals.find(x => x.ingredientId === t.ingredientId);
       if (ex) ex.qty = round3(ex.qty + t.qty); else plannedTotals.push({ ...t });
     }
   }
-  return { nextFriday: nextFriday(), items: shoppingList(db.ingredients, plannedTotals), plannedTotals };
+  const items = shoppingList(db.ingredients, plannedTotals).map(i => ({
+    ...i,
+    purchaseUnits: purchaseUnitsFor(i.ingredientId, i.unit),
+  }));
+  return { nextFriday: nextFriday(), items, plannedTotals };
+}
+// Restock one shopping item: enter the amount bought in any purchase unit,
+// convert it to the inventory unit, and add it to stock. One item at a time.
+function doRestock(ingredientId, amount, unit) {
+  const ing = db.ingredients.find(i => i.id === ingredientId);
+  if (!ing) throw new Error(`Ingredient not found: ${ingredientId}`);
+  const added = convertPurchase(ingredientId, amount, unit);
+  const before = ing.current;
+  ing.current = round3(ing.current + added);
+  persist();
+  return { ingredientId, name: ing.name, unit: ing.unit, boughtAmount: Number(amount), boughtUnit: unit, added, before, after: ing.current };
 }
 
 // ---------- MCP server ----------
@@ -137,13 +156,13 @@ function createMcpServer() {
     db.recipes.push(r); persist();
     return { content: [{ type: 'text', text: JSON.stringify(r) }] };
   });
-  server.tool('plan_bake', 'Plan finished items and get aggregated sub-recipes. items: [{recipeId, qty}] e.g. [{recipeId:"brookie",qty:2},{recipeId:"brownies",qty:1}] = 1 cookie + 2 brownie portions. Brownie eggs: 3 per whole portion + 2 for a 0.5 remainder.', { items: z.array(z.object(itemShape)) },
-    async ({ items }) => ({ content: [{ type: 'text', text: JSON.stringify(doPlan(items)) }] }));
+  server.tool('plan_bake', 'Plan finished items and get aggregated sub-recipes. items: [{recipeId, qty}] e.g. [{recipeId:"brookie",qty:2},{recipeId:"brownies",qty:1}] = 1 cookie + 2 brownie portions. Brownie eggs: 3 per whole portion + 2 for a 0.5 remainder. Optional doughBatchesMade: whole batches of cookie dough to make in this plan; dough used for brookies is taken from it and the rest becomes frozen balls, e.g. 1 brookie with doughBatchesMade 2 freezes 18 balls.', { items: z.array(z.object(itemShape)), doughBatchesMade: z.number().optional() },
+    async ({ items, doughBatchesMade }) => ({ content: [{ type: 'text', text: JSON.stringify(doPlan(items, doughBatchesMade === undefined ? undefined : { batchesMade: doughBatchesMade })) }] }));
   server.tool('get_bake_plan', 'Get a saved bake plan by id.', { id: z.string() },
     async ({ id }) => {
       const p = db.bakePlans.find(x => x.id === id);
       if (!p) throw new Error('Bake plan not found');
-      return { content: [{ type: 'text', text: JSON.stringify({ ...p, calculation: doPlan(p.items) }) }] };
+      return { content: [{ type: 'text', text: JSON.stringify({ ...p, calculation: doPlan(p.items, p.dough) }) }] };
     });
   server.tool('complete_bake', 'Complete a saved bake plan: deducts aggregated ingredients from inventory.', { id: z.string() },
     async ({ id }) => ({ content: [{ type: 'text', text: JSON.stringify(doCompleteBake(id)) }] }));
@@ -151,6 +170,8 @@ function createMcpServer() {
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
   server.tool('get_restock_forecast', 'Alias for get_shopping_list: weekly restock forecast for the Friday shop.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
+  server.tool('restock_ingredient', 'Restock one ingredient from the shopping list: enter the amount bought in any purchase unit and it is converted to the inventory unit and added to stock. E.g. instant coffee 200 g = 125 tsp (1 tsp = 1.6 g, BONCAFE, weighed), flour 1 kg = 1000 g, white sugar 1 bag = 3000 g, chocolate 1 bag = 2500 g, eggs 1 tray = 10 eggs.', { id: z.string(), amount: z.number(), unit: z.string() },
+    async ({ id, amount, unit }) => ({ content: [{ type: 'text', text: JSON.stringify(doRestock(id, amount, unit)) }] }));
   server.tool('make_cookie_dough', 'Make cookie dough: 1 batch = 12 balls (usually 13, count as 12). Deduct the recipe once per batch, bake some cookies now, freeze the rest as balls. batchesMade (usually 1), cookiesBakedNow (0-12 per batch); balls frozen = batchesMade*12 - cookiesBakedNow. Legacy fields portionsMade / portionsBakedNow / portionsFrozen (in batches) are also accepted.', {
     batchesMade: z.number().optional(), cookiesBakedNow: z.number().optional(),
     portionsMade: z.number().optional(), portionsBakedNow: z.number().optional(), portionsFrozen: z.number().optional(),
@@ -235,14 +256,20 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && pathname === '/api/plan') {
         const b = await readBody(req);
-        return send(res, 200, doPlan(b.items || []));
+        const dough = b.dough || (b.doughBatchesMade === undefined ? undefined : { batchesMade: b.doughBatchesMade });
+        try { return send(res, 200, doPlan(b.items || [], dough)); }
+        catch (e) { return send(res, 400, { error: e.message }); }
       }
-      if (req.method === 'GET' && pathname === '/api/bake-plans') return send(res, 200, db.bakePlans.map(p => ({ ...p, calculation: doPlan(p.items) })));
+      if (req.method === 'GET' && pathname === '/api/bake-plans') return send(res, 200, db.bakePlans.map(p => ({ ...p, calculation: doPlan(p.items, p.dough) })));
       if (req.method === 'POST' && pathname === '/api/bake-plans') {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
-        const plan = { id: `plan-${Date.now()}`, name: b.name || 'Bake plan', date: b.date || new Date().toISOString().slice(0, 10), items: b.items || [], status: 'planned', createdAt: new Date().toISOString() };
-        db.bakePlans.push(plan); persist(); return send(res, 201, { ...plan, calculation: doPlan(plan.items) });
+        const dough = b.dough || (b.doughBatchesMade === undefined ? null : { batchesMade: b.doughBatchesMade });
+        const plan = { id: `plan-${Date.now()}`, name: b.name || 'Bake plan', date: b.date || new Date().toISOString().slice(0, 10), items: b.items || [], dough, status: 'planned', createdAt: new Date().toISOString() };
+        try {
+          const calc = doPlan(plan.items, plan.dough);
+          db.bakePlans.push(plan); persist(); return send(res, 201, { ...plan, calculation: calc });
+        } catch (e) { return send(res, 400, { error: e.message }); }
       }
       const completeMatch = pathname.match(/^\/api\/bake-plans\/([\w-]+)\/complete$/);
       if (completeMatch && req.method === 'POST') {
@@ -254,6 +281,12 @@ const server = http.createServer(async (req, res) => {
         if (!requireKey(req, res)) return;
         const b = await readBody(req);
         try { return send(res, 200, doMakeDough(b)); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (req.method === 'POST' && pathname === '/api/restock') {
+        if (!requireKey(req, res)) return;
+        const b = await readBody(req);
+        try { return send(res, 200, doRestock(b.ingredientId || b.id, b.amount, b.unit)); }
         catch (e) { return send(res, 400, { error: e.message }); }
       }
       if (req.method === 'GET' && pathname === '/api/shopping-list') return send(res, 200, doShoppingList());

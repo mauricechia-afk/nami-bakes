@@ -1,4 +1,4 @@
-# Nami Bakes — Bakery Pro (standalone)
+# Mise en Place — Nami Bakes (standalone)
 
 A standalone bakery app for Maurice / Nami Bakes. Inventory, recipes,
 batch planning, and a weekly (Friday) shopping list — with an MCP server

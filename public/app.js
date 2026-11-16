@@ -95,7 +95,7 @@ function renderPlanLines() {
 }
 function addPlanLine() {
   const div = document.createElement('div'); div.className = 'row plan-line';
-  div.innerHTML = `<select>${recipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty"><button type="button" class="ghost small remove-line">Remove</button>`;
+  div.innerHTML = `<select>${recipes.filter(r => r.id !== 'cookie-dough').map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty"><button type="button" class="ghost small remove-line">Remove</button>`;
   div.querySelector('.remove-line').onclick = () => {
     const lines = document.querySelectorAll('#plan-lines .plan-line');
     if (lines.length <= 1) { alert('A bake needs at least one item. Change this line instead of removing it.'); return; }
@@ -107,43 +107,113 @@ document.getElementById('add-plan-line').onclick = addPlanLine;
 function planItems() {
   return [...document.querySelectorAll('#plan-lines .row')].map(row => ({ recipeId: row.querySelector('select').value, qty: Number(row.querySelector('input').value) })).filter(x => x.qty > 0);
 }
+function planDough() {
+  const v = document.getElementById('dough-batches-made').value;
+  return v === '' || v === null ? undefined : { batchesMade: Number(v) };
+}
 function showPlan(calc) {
   const el = document.getElementById('plan-result');
+  const doughLine = (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null)
+    ? `<p><strong>Cookie dough:</strong> make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} ${calc.doughUsed === 1 ? 'batch' : 'batches'} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.</p>`
+    : '';
   el.innerHTML = `<div class="card"><h3>Sub-recipes — make each in one go</h3>
+  ${doughLine}
   ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
   ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
   <h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
   ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this plan.</p>'}
   </div>`;
+  const dough = planDough();
+  if (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null && dough === undefined) {
+    document.getElementById('dough-batches-made').value = calc.doughBatchesMade;
+  }
+  document.getElementById('dough-preview').textContent = calc.ballsAdded > 0
+    ? `On completing this plan, ${fmt(calc.ballsAdded)} balls go to the freezer.`
+    : '';
 }
-document.getElementById('calc-plan').onclick = async () => showPlan(await api('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: planItems() }) }));
+document.getElementById('calc-plan').onclick = async () => {
+  try {
+    const dough = planDough();
+    const body = { items: planItems() };
+    if (dough) body.doughBatchesMade = dough.batchesMade;
+    showPlan(await api('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+  } catch (e) { document.getElementById('plan-result').innerHTML = `<div class="card"><p class="warn">${e.message}</p></div>`; }
+};
 document.getElementById('save-plan').onclick = async () => {
-  const plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || new Date().toISOString().slice(0, 10), items: planItems() }) });
-  showPlan(plan.calculation); await loadPlans();
+  try {
+    const dough = planDough();
+    const body = { name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || new Date().toISOString().slice(0, 10), items: planItems() };
+    if (dough) body.doughBatchesMade = dough.batchesMade;
+    const plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    showPlan(plan.calculation); await loadPlans();
+  } catch (e) { alert(e.message); }
 };
 async function loadPlans() {
   plans = await api('/api/bake-plans');
-  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ')}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button>` : ''}</div>`).join('') || '<p>No bake plans yet.</p>';
+  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button>` : ''}</div>`).join('') || '<p>No bake plans yet.</p>';
 }
-async function completePlan(id) { await api('/api/bake-plans/' + id + '/complete', { method: 'POST' }); await loadAll(); await loadPlans(); }
-function updateDoughPreview() {
-  const batches = Number(document.getElementById('dough-batches').value), baked = Number(document.getElementById('dough-baked').value);
-  const total = batches * 12, frozen = total - baked;
-  document.getElementById('dough-preview').textContent = baked >= 0 && baked <= total
-    ? `${batches} ${batches === 1 ? 'batch' : 'batches'} = ${total} balls. Bake ${baked} now, freeze ${frozen} balls — ${frozen} Cookie Dough Balls added to inventory.`
-    : `Cookies baked now must be 0–${total} for ${batches} ${batches === 1 ? 'batch' : 'batches'}.`;
+async function completePlan(id) {
+  const r = await api('/api/bake-plans/' + id + '/complete', { method: 'POST' });
+  if (r.ballsAdded > 0) alert(`Bake completed. ${r.ballsAdded} balls added to the freezer.`);
+  await loadAll(); await loadPlans();
 }
-['dough-batches', 'dough-baked'].forEach(id => document.getElementById(id).oninput = updateDoughPreview);
-updateDoughPreview();
-document.getElementById('make-dough').onclick = async () => {
-  const r = await api('/api/make-dough', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batchesMade: Number(document.getElementById('dough-batches').value), cookiesBakedNow: Number(document.getElementById('dough-baked').value) }) });
-  alert(`Dough made. ${r.ballsAdded} balls added to inventory.`); await loadAll();
-};
 async function loadShopping() {
   const data = await api('/api/shopping-list');
   document.getElementById('friday-note').textContent = 'Next Friday shop: ' + data.nextFriday;
-  document.getElementById('shopping-list').innerHTML = data.items.length ? data.items.map(i => `<div class="card"><strong>${i.name}</strong> — Need ${fmt(i.need)} ${i.unit} (have ${fmt(i.have)}, min ${fmt(i.min)}) — ${i.reason}</div>`).join('') : '<p>All stock levels are healthy.</p>';
+  const list = document.getElementById('shopping-list');
+  if (!data.items.length) { list.innerHTML = '<p>All stock levels are healthy.</p>'; window._shopping = data; return; }
+  list.innerHTML = data.items.map(i => {
+    const units = i.purchaseUnits || [{ unit: i.unit, label: i.unit, perUnit: 1 }];
+    return `<div class="card" data-ingredient="${i.ingredientId}">
+      <label><input type="checkbox" class="restock-bought"> Bought</label>
+      <strong>${i.name}</strong> — Need ${fmt(i.need)} ${i.unit} (have ${fmt(i.have)}, min ${fmt(i.min)}) — ${i.reason}<br>
+      <label>Bought <input type="number" class="restock-amount" value="${fmt(i.need)}" min="0" step="any" style="width:100px"></label>
+      <select class="restock-unit">${units.map(u => `<option value="${u.unit}" data-per-unit="${u.perUnit}" ${u.unit === i.unit ? 'selected' : ''}>${u.label}</option>`).join('')}</select>
+      <p class="restock-preview hint"></p>
+      <button class="restock-add" disabled>Add to inventory</button>
+    </div>`;
+  }).join('');
   window._shopping = data;
+  list.querySelectorAll('.card').forEach(card => {
+    const item = data.items.find(x => x.ingredientId === card.dataset.ingredient);
+    const bought = card.querySelector('.restock-bought');
+    const amountEl = card.querySelector('.restock-amount');
+    const unitEl = card.querySelector('.restock-unit');
+    const preview = card.querySelector('.restock-preview');
+    const addBtn = card.querySelector('.restock-add');
+    const updatePreview = () => {
+      const perUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
+      const amount = Number(amountEl.value);
+      if (!amount || amount <= 0 || !perUnit) { preview.textContent = ''; return; }
+      const added = Math.round(amount * perUnit * 1000) / 1000;
+      preview.textContent = `${fmt(amount)} ${unitEl.value} = ${fmt(added)} ${item.unit} in stock. New stock will be ${fmt(Math.round((item.have + added) * 1000) / 1000)} ${item.unit}.`;
+    };
+    unitEl.onchange = () => {
+      // Keep the converted total the same when switching units.
+      const oldPerUnit = Number(unitEl.dataset.prevPerUnit || unitEl.selectedOptions[0].dataset.perUnit);
+      const perUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
+      const amount = Number(amountEl.value);
+      if (amount > 0 && oldPerUnit && perUnit) amountEl.value = Math.round((amount * oldPerUnit / perUnit) * 100) / 100;
+      unitEl.dataset.prevPerUnit = perUnit;
+      updatePreview();
+    };
+    unitEl.dataset.prevPerUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
+    amountEl.oninput = updatePreview; unitEl.onchange = unitEl.onchange;
+    bought.onchange = () => { addBtn.disabled = !bought.checked; };
+    updatePreview();
+    addBtn.onclick = async () => {
+      const amount = Number(amountEl.value), unit = unitEl.value;
+      if (!amount || amount <= 0) { alert('Enter how much you bought first.'); return; }
+      const perUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
+      const added = Math.round(amount * perUnit * 1000) / 1000;
+      if (!confirm(`Add ${fmt(amount)} ${unit} of ${item.name} to inventory? That is ${fmt(added)} ${item.unit}. Stock will go from ${fmt(item.have)} to ${fmt(Math.round((item.have + added) * 1000) / 1000)} ${item.unit}.`)) return;
+      try {
+        const r = await api('/api/restock', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ingredientId: item.ingredientId, amount, unit }) });
+        alert(`Added ${fmt(r.added)} ${r.unit} of ${r.name}. Stock is now ${fmt(r.after)} ${r.unit}.`);
+        await loadAll(); await loadShopping();
+      } catch (e) { alert(e.message); }
+    };
+  });
 }
 document.getElementById('copy-list').onclick = async () => { const d = window._shopping; if (d) { await navigator.clipboard.writeText(d.items.map(i => `${i.name} — need ${fmt(i.need)} ${i.unit}`).join('\n')); alert('Copied'); } };
 document.getElementById('export-csv').onclick = () => window.open('/api/shopping-list.csv', '_blank');
