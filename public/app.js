@@ -33,7 +33,15 @@ function renderInventory() {
     <button class="ghost" onclick="deleteIngredient('${i.id}')">Delete</button></div>`;
   }).join('');
   document.querySelectorAll('#inventory-list input').forEach(inp => inp.onchange = async () => {
-    await api('/api/inventory/' + inp.dataset.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [inp.dataset.field]: Number(inp.value) }) });
+    const raw = inp.value.trim();
+    const val = Number(raw);
+    if (raw === '' || !Number.isFinite(val)) { await loadAll(); return; }
+    if (inp.dataset.field === 'current' && val === 0) {
+      const ing = ingredients.find(x => x.id === inp.dataset.id);
+      const name = ing ? ing.name : 'this ingredient';
+      if (!confirm(`Set ${name} stock to 0? This will put it on the shopping list. Choose OK only if you are really out of ${name}.`)) { await loadAll(); return; }
+    }
+    await api('/api/inventory/' + inp.dataset.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [inp.dataset.field]: val }) });
     await loadAll();
   });
 }
@@ -93,9 +101,10 @@ function renderPlanLines() {
   const el = document.getElementById('plan-lines');
   if (!el.dataset.init) { el.dataset.init = '1'; addPlanLine(); }
 }
-function addPlanLine() {
+let editingPlanId = null;
+function addPlanLine(recipeId, qty) {
   const div = document.createElement('div'); div.className = 'row plan-line';
-  div.innerHTML = `<select>${recipes.filter(r => r.id !== 'cookie-dough').map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty"><button type="button" class="ghost small remove-line">Remove</button>`;
+  div.innerHTML = `<select>${recipes.filter(r => r.id !== 'cookie-dough').map(r => `<option value="${r.id}" ${r.id === recipeId ? 'selected' : ''}>${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="${qty ?? 1}" style="width:100px" placeholder="Qty"><button type="button" class="ghost small remove-line">Remove</button>`;
   div.querySelector('.remove-line').onclick = () => {
     const lines = document.querySelectorAll('#plan-lines .plan-line');
     if (lines.length <= 1) { alert('A bake needs at least one item. Change this line instead of removing it.'); return; }
@@ -144,13 +153,54 @@ document.getElementById('save-plan').onclick = async () => {
     const dough = planDough();
     const body = { name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || new Date().toISOString().slice(0, 10), items: planItems() };
     if (dough) body.doughBatchesMade = dough.batchesMade;
-    const plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    let plan;
+    if (editingPlanId) {
+      plan = await api('/api/bake-plans/' + editingPlanId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      cancelPlanEdit();
+    } else {
+      plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    }
     showPlan(plan.calculation); await loadPlans();
   } catch (e) { alert(e.message); }
 };
+function cancelPlanEdit() {
+  editingPlanId = null;
+  document.getElementById('save-plan').textContent = 'Save plan';
+  document.getElementById('cancel-edit-plan').classList.add('hidden');
+}
+document.getElementById('cancel-edit-plan').onclick = () => {
+  cancelPlanEdit();
+  document.getElementById('plan-lines').innerHTML = '';
+  document.getElementById('plan-lines').dataset.init = '';
+  document.getElementById('plan-name').value = '';
+  document.getElementById('dough-batches-made').value = '';
+  renderPlanLines();
+};
+function editPlan(id) {
+  const p = plans.find(x => x.id === id);
+  if (!p || p.status !== 'planned') { alert('Only a planned bake plan can be edited.'); return; }
+  editingPlanId = id;
+  document.getElementById('plan-lines').innerHTML = '';
+  if (p.items.length) p.items.forEach(i => addPlanLine(i.recipeId, i.qty));
+  else addPlanLine();
+  document.getElementById('plan-name').value = p.name || '';
+  document.getElementById('plan-date').value = p.date || '';
+  document.getElementById('dough-batches-made').value = p.dough ? p.dough.batchesMade : '';
+  document.getElementById('save-plan').textContent = 'Update plan';
+  document.getElementById('cancel-edit-plan').classList.remove('hidden');
+  document.querySelector('#tab-planning .card').scrollIntoView({ behavior: 'smooth' });
+}
+async function deletePlan(id) {
+  const p = plans.find(x => x.id === id);
+  const note = p && p.status === 'completed' ? ' This plan is already completed, so deleting it will not put the ingredients back.' : ' Nothing will be deducted from stock.';
+  if (!confirm(`Delete the bake plan "${p ? p.name : id}"?${note}`)) return;
+  await api('/api/bake-plans/' + id, { method: 'DELETE' });
+  if (editingPlanId === id) cancelPlanEdit();
+  await loadPlans();
+}
 async function loadPlans() {
   plans = await api('/api/bake-plans');
-  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button>` : ''}</div>`).join('') || '<p>No bake plans yet.</p>';
+  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`).join('') || '<p>No bake plans yet.</p>';
 }
 async function completePlan(id) {
   const r = await api('/api/bake-plans/' + id + '/complete', { method: 'POST' });

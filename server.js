@@ -166,6 +166,28 @@ function createMcpServer() {
     });
   server.tool('complete_bake', 'Complete a saved bake plan: deducts aggregated ingredients from inventory.', { id: z.string() },
     async ({ id }) => ({ content: [{ type: 'text', text: JSON.stringify(doCompleteBake(id)) }] }));
+  server.tool('update_bake_plan', 'Edit a saved bake plan that is still planned (completed plans cannot be edited, their stock is already deducted). Change name, date, items and/or doughBatchesMade.', { id: z.string(), name: z.string().optional(), date: z.string().optional(), items: z.array(z.object(itemShape)).optional(), doughBatchesMade: z.number().optional() },
+    async ({ id, name, date, items, doughBatchesMade }) => {
+      const p = db.bakePlans.find(x => x.id === id);
+      if (!p) throw new Error('Bake plan not found');
+      if (p.status !== 'planned') throw new Error('Only a planned bake plan can be edited. This one is already completed.');
+      const newItems = items !== undefined ? items : p.items;
+      const newDough = doughBatchesMade !== undefined ? { batchesMade: doughBatchesMade } : p.dough;
+      const calc = doPlan(newItems, newDough); // validate before changing anything
+      if (name !== undefined) p.name = name;
+      if (date !== undefined) p.date = date;
+      p.items = newItems;
+      p.dough = newDough;
+      persist();
+      return { content: [{ type: 'text', text: JSON.stringify({ ...p, calculation: calc }) }] };
+    });
+  server.tool('delete_bake_plan', 'Delete a saved bake plan. Deleting a planned plan deducts nothing. Deleting a completed plan does not put the ingredients back.', { id: z.string() },
+    async ({ id }) => {
+      const p = db.bakePlans.find(x => x.id === id);
+      if (!p) throw new Error('Bake plan not found');
+      db.bakePlans = db.bakePlans.filter(x => x.id !== id); persist();
+      return { content: [{ type: 'text', text: JSON.stringify({ deleted: id }) }] };
+    });
   server.tool('get_shopping_list', 'Friday shopping list: below-min items plus projected need from planned bakes.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
   server.tool('get_restock_forecast', 'Alias for get_shopping_list: weekly restock forecast for the Friday shop.', {},
@@ -276,6 +298,30 @@ const server = http.createServer(async (req, res) => {
         if (!requireKey(req, res)) return;
         try { return send(res, 200, doCompleteBake(completeMatch[1])); }
         catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      const planMatch = pathname.match(/^\/api\/bake-plans\/([\w-]+)$/);
+      if (planMatch) {
+        const p = db.bakePlans.find(x => x.id === planMatch[1]);
+        if (!p) return send(res, 404, { error: 'Bake plan not found' });
+        if (req.method === 'PATCH') {
+          if (!requireKey(req, res)) return;
+          if (p.status !== 'planned') return send(res, 400, { error: 'Only a planned bake plan can be edited. This one is already completed.' });
+          const b = await readBody(req);
+          const newItems = b.items !== undefined ? b.items : p.items;
+          const newDough = b.dough !== undefined ? b.dough : (b.doughBatchesMade !== undefined ? { batchesMade: b.doughBatchesMade } : p.dough);
+          try {
+            const calc = doPlan(newItems, newDough); // validate before changing anything
+            if (b.name) p.name = b.name;
+            if (b.date) p.date = b.date;
+            p.items = newItems;
+            p.dough = newDough;
+            persist(); return send(res, 200, { ...p, calculation: calc });
+          } catch (e) { return send(res, 400, { error: e.message }); }
+        }
+        if (req.method === 'DELETE') {
+          if (!requireKey(req, res)) return;
+          db.bakePlans = db.bakePlans.filter(x => x.id !== p.id); persist(); return send(res, 200, { deleted: p.id });
+        }
       }
       if (req.method === 'POST' && pathname === '/api/make-dough') {
         if (!requireKey(req, res)) return;

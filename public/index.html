@@ -10,8 +10,12 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><h1>Mise en Place</h1><p>Nami Bakes — Intelligent Kitchen Management System</p>
-<p class="sub">Data is saved on the server, so every device sees the same stock. Nothing is stored only in this browser.</p></header>
+<header>
+<p class="eyebrow">Nami Bakes</p>
+<h1>Mise en Place</h1>
+<p class="tagline">Intelligent Kitchen Management System</p>
+<p class="sub">Data is saved on the server, so every device sees the same stock. Nothing is stored only in this browser.</p>
+</header>
 <nav>
   <button data-tab="inventory" class="active">Inventory</button>
   <button data-tab="recipes">Recipes</button>
@@ -63,7 +67,7 @@
       <p id="dough-preview" class="hint"></p>
       <button id="calc-plan">Calculate sub-recipes</button>
       <div class="row"><input id="plan-name" placeholder="Plan name (e.g. Sat bakes)"><input id="plan-date" type="date"></div>
-      <button id="save-plan">Save plan</button>
+      <button id="save-plan">Save plan</button> <button id="cancel-edit-plan" class="ghost hidden">Cancel edit</button>
     </div>
     <div id="plan-result"></div>
     <h3>Saved plans</h3>

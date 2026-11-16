@@ -12,13 +12,17 @@
 }
 *{box-sizing:border-box}
 body{font-family:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;background:var(--ivory);color:#22201d;line-height:1.55}
-header{padding:28px 20px 22px;background:var(--ivory);border-bottom:1px solid var(--bronze)}
+header{padding:36px 20px 30px;background:linear-gradient(180deg,var(--teal),var(--teal-dark));border-bottom:3px solid var(--bronze);text-align:center}
+header h1{color:var(--ivory)}
+header .eyebrow{color:var(--bronze);letter-spacing:.35em;text-transform:uppercase;font-size:12px;font-weight:600;margin:0 0 10px}
+header .tagline{color:rgba(255,251,248,.88);margin:8px 0 0;font-size:16px}
+header .sub{color:rgba(255,251,248,.65);margin:10px 0 0;font-size:14px}
 h1,h2,h3,h4{font-family:"Playfair Display",Georgia,"Times New Roman",serif;color:var(--ink);letter-spacing:.01em}
-h1{margin:0;font-size:34px;font-weight:700}
+h1{margin:0;font-size:42px;font-weight:700}
 h2{font-size:26px;margin:8px 0}
 h3{font-size:20px;margin:0 0 8px}
 .sub{color:var(--teal);margin:6px 0 0;font-size:15px}
-header p:last-child{color:var(--muted);font-size:14px}
+@media (max-width:560px){header h1{font-size:34px}}
 nav{display:flex;gap:10px;padding:14px 16px;background:var(--ivory);position:sticky;top:0;border-bottom:1px solid var(--line);flex-wrap:wrap;z-index:10}
 nav button{padding:11px 18px;border:1px solid var(--bronze);background:#ffffff;color:var(--teal);border-radius:999px;cursor:pointer;font-weight:600;font-size:14px;font-family:inherit}
 nav button:hover{border-color:var(--teal);color:var(--ink)}

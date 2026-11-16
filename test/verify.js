@@ -116,6 +116,18 @@ try {
   check('Complete: flour now 1620 - 495 = 1125', eq(inv5.find(i => i.id === 'flour')?.current, 1125), `got ${inv5.find(i => i.id === 'flour')?.current}`);
   check('Complete: eggs now 18 - 7 = 11', eq(inv5.find(i => i.id === 'eggs')?.current, 11), `got ${inv5.find(i => i.id === 'eggs')?.current}`);
 
+  console.log('Edit and delete a bake plan');
+  const editPlan = await j('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Test plan to edit', items: [{ recipeId: 'brookie', qty: 1 }], doughBatchesMade: 2 }) });
+  const edited = await j(`/api/bake-plans/${editPlan.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 2 }], doughBatchesMade: 3 }) });
+  check('Edited plan: 2 brookies, dough 3 batches', edited.calculation && eq(edited.calculation.browniePortions, 1) && eq(edited.calculation.doughBatchesMade, 3), JSON.stringify(edited.calculation));
+  check('Edited plan: freeze (3 - 1) x 12 = 24 balls', edited.calculation && eq(edited.calculation.ballsAdded, 24), JSON.stringify(edited.calculation));
+  const deleted = await j(`/api/bake-plans/${editPlan.id}`, { method: 'DELETE' });
+  check('Deleted plan returns its id', deleted.deleted === editPlan.id, JSON.stringify(deleted));
+  const plansAfter = await j('/api/bake-plans');
+  check('Deleted plan is gone from saved plans', !plansAfter.some(p => p.id === editPlan.id));
+  const editDone = await j(`/api/bake-plans/${saved.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Changed' }) });
+  check('Completed plan cannot be edited', typeof editDone.error === 'string' && editDone.error.includes('Only a planned bake plan'), JSON.stringify(editDone));
+
   console.log('Shopping list (set Eggs to 5, below min 10, should be flagged)');
   await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
   const shop = await j('/api/shopping-list');
