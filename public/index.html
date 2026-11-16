@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nami Bakes — Bakery Pro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -19,6 +22,7 @@
   <section id="tab-inventory" class="tab active">
     <div class="row"><h2>Inventory Management</h2><button id="add-ingredient">+ Add Ingredient</button></div>
     <p class="hint">Tap a quantity to adjust it. All quantities are editable.</p>
+    <p class="hint">Stock bar: the bar is full at 3 times the minimum, a comfortable level. Teal means healthy, gold means getting low, red means below minimum. The label under each bar shows how many times the minimum you have.</p>
     <div id="inventory-list"></div>
     <div id="ingredient-form" class="card hidden">
       <h3>Add ingredient</h3>
@@ -35,9 +39,10 @@
     <div class="row"><h2>Recipe Management</h2><button id="add-recipe">+ Add Recipe</button></div>
     <div id="recipe-list"></div>
     <div id="recipe-form" class="card hidden">
-      <h3>Add recipe (per portion)</h3>
+      <h3 id="recipe-form-title">Add recipe (per portion)</h3>
       <input id="new-recipe-name" placeholder="Recipe name">
       <input id="new-recipe-desc" placeholder="Description / notes">
+      <div class="row"><label style="flex:1">Yields <input id="new-recipe-yields" type="number" step="any" min="0" value="1"></label><label style="flex:1">Yield unit <input id="new-recipe-yield-unit" placeholder="portions, balls, brookie" value="portions"></label></div>
       <p class="hint">Add ingredients as "Name: qty unit" — one per line, e.g. Flour: 195 g</p>
       <textarea id="new-recipe-ings" rows="6" placeholder="Flour: 195 g&#10;Eggs: 1 eggs"></textarea>
       <button id="save-recipe">Add Recipe</button>

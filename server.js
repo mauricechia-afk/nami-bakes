@@ -212,6 +212,27 @@ const server = http.createServer(async (req, res) => {
         const r = { id: slug(b.name), name: b.name, kind: b.kind || 'base', description: b.description || '', yields: b.yields || 1, yieldUnit: b.yieldUnit || 'portions', ingredients: b.ingredients || [], components: b.components || [] };
         db.recipes.push(r); persist(); return send(res, 201, r);
       }
+      const recipeMatch = pathname.match(/^\/api\/recipes\/([\w-]+)$/);
+      if (recipeMatch) {
+        const r = db.recipes.find(x => x.id === recipeMatch[1]);
+        if (!r) return send(res, 404, { error: 'Recipe not found' });
+        if (req.method === 'PATCH') {
+          if (!requireKey(req, res)) return;
+          const b = await readBody(req);
+          if (b.name) r.name = b.name;
+          if (b.description !== undefined) r.description = b.description;
+          if (b.kind) r.kind = b.kind;
+          if (b.yields !== undefined) r.yields = b.yields;
+          if (b.yieldUnit !== undefined) r.yieldUnit = b.yieldUnit;
+          if (b.ingredients !== undefined) r.ingredients = b.ingredients;
+          if (b.components !== undefined) r.components = b.components;
+          persist(); return send(res, 200, r);
+        }
+        if (req.method === 'DELETE') {
+          if (!requireKey(req, res)) return;
+          db.recipes = db.recipes.filter(x => x.id !== r.id); persist(); return send(res, 200, { deleted: r.id });
+        }
+      }
       if (req.method === 'POST' && pathname === '/api/plan') {
         const b = await readBody(req);
         return send(res, 200, doPlan(b.items || []));

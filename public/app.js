@@ -20,12 +20,16 @@ async function loadAll() {
 }
 function renderInventory() {
   document.getElementById('inventory-list').innerHTML = ingredients.map(i => {
-    const low = i.current <= i.min;
-    const pct = Math.min(100, i.current / Math.max(i.min * 3, 1) * 100);
-    return `<div class="card"><div class="row"><strong>${i.name}</strong><span>${low ? '<span class="warn">Below minimum</span>' : ''}</span></div>
+    const ratio = i.min > 0 ? i.current / i.min : (i.current > 0 ? 99 : 0);
+    const tier = i.current <= i.min ? 'below' : (ratio <= 1.5 ? 'low' : 'ok');
+    const tierLabel = tier === 'below' ? 'Below minimum' : (tier === 'low' ? 'Getting low' : 'Healthy');
+    const tierClass = tier === 'below' ? 'warn' : (tier === 'low' ? 'low-text' : 'ok-text');
+    const pct = Math.min(100, Math.round(i.current / Math.max(i.min * 3, 1) * 100));
+    return `<div class="card"><div class="row"><strong>${i.name}</strong><span class="${tierClass}">${tierLabel}</span></div>
     <div>Current Stock: <input type="number" step="any" value="${i.current}" data-id="${i.id}" data-field="current" style="width:120px"> ${i.unit}</div>
     <div>Min Stock: <input type="number" step="any" value="${i.min}" data-id="${i.id}" data-field="min" style="width:120px"> ${i.unit}</div>
-    <div class="bar ${low ? 'low' : ''}"><div style="width:${pct}%"></div></div>
+    <div class="bar ${tier}"><div style="width:${pct}%"></div></div>
+    <p class="bar-label">${fmt(ratio)}x minimum, ${pct}% of a comfortable level (3x minimum). ${tier === 'below' ? 'This bar is red because stock is at or below minimum.' : (tier === 'low' ? 'This bar is gold because stock is only just above minimum.' : 'This bar is teal because stock is comfortably above minimum.')}</p>
     <button class="ghost" onclick="deleteIngredient('${i.id}')">Delete</button></div>`;
   }).join('');
   document.querySelectorAll('#inventory-list input').forEach(inp => inp.onchange = async () => {
@@ -40,27 +44,63 @@ document.getElementById('save-ingredient').onclick = async () => {
   await api('/api/inventory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('new-name').value, unit: document.getElementById('new-unit').value, current: Number(document.getElementById('new-current').value), min: Number(document.getElementById('new-min').value) }) });
   await loadAll();
 };
+let editingRecipeId = null;
 function renderRecipes() {
-  document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`; }).join('')}</table></div>`).join('');
+  document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`; }).join('')}</table><div class="row" style="margin-top:10px"><button class="ghost small" onclick="editRecipe('${r.id}')">Edit recipe</button><button class="danger small" onclick="deleteRecipe('${r.id}')">Delete</button></div></div>`).join('');
 }
-document.getElementById('add-recipe').onclick = () => document.getElementById('recipe-form').classList.remove('hidden');
-document.getElementById('cancel-recipe').onclick = () => document.getElementById('recipe-form').classList.add('hidden');
+function resetRecipeForm() {
+  editingRecipeId = null;
+  document.getElementById('recipe-form-title').textContent = 'Add recipe (per portion)';
+  document.getElementById('save-recipe').textContent = 'Add Recipe';
+  document.getElementById('new-recipe-name').value = '';
+  document.getElementById('new-recipe-desc').value = '';
+  document.getElementById('new-recipe-yields').value = 1;
+  document.getElementById('new-recipe-yield-unit').value = 'portions';
+  document.getElementById('new-recipe-ings').value = '';
+  document.getElementById('recipe-form').classList.add('hidden');
+}
+function editRecipe(id) {
+  const r = recipes.find(x => x.id === id); if (!r) return;
+  editingRecipeId = id;
+  document.getElementById('recipe-form-title').textContent = 'Edit recipe: ' + r.name;
+  document.getElementById('save-recipe').textContent = 'Save changes';
+  document.getElementById('new-recipe-name').value = r.name;
+  document.getElementById('new-recipe-desc').value = r.description || '';
+  document.getElementById('new-recipe-yields').value = r.yields || 1;
+  document.getElementById('new-recipe-yield-unit').value = r.yieldUnit || 'portions';
+  document.getElementById('new-recipe-ings').value = (r.ingredients || []).map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `${ing ? ing.name : i.ingredientId}: ${fmt(i.qty)} ${i.unit}`; }).join('\n');
+  document.getElementById('recipe-form').classList.remove('hidden');
+  document.getElementById('recipe-form').scrollIntoView({ behavior: 'smooth' });
+}
+async function deleteRecipe(id) { const r = recipes.find(x => x.id === id); if (confirm(`Delete recipe "${r ? r.name : id}"?`)) { await api('/api/recipes/' + id, { method: 'DELETE' }); await loadAll(); } }
+document.getElementById('add-recipe').onclick = () => { resetRecipeForm(); document.getElementById('recipe-form').classList.remove('hidden'); };
+document.getElementById('cancel-recipe').onclick = resetRecipeForm;
 document.getElementById('save-recipe').onclick = async () => {
   const ings = document.getElementById('new-recipe-ings').value.split('\n').filter(Boolean).map(line => {
     const m = line.match(/^(.*?):\s*([\d.]+)\s*(.*)$/); if (!m) return null;
     const ing = ingredients.find(x => x.name.toLowerCase() === m[1].trim().toLowerCase());
     return { ingredientId: ing ? ing.id : m[1].trim(), qty: Number(m[2]), unit: m[3] || '' };
   }).filter(Boolean);
-  await api('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, ingredients: ings }) });
-  await loadAll();
+  const body = { name: document.getElementById('new-recipe-name').value, description: document.getElementById('new-recipe-desc').value, yields: Number(document.getElementById('new-recipe-yields').value) || 1, yieldUnit: document.getElementById('new-recipe-yield-unit').value || 'portions', ingredients: ings };
+  if (editingRecipeId) {
+    await api('/api/recipes/' + editingRecipeId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } else {
+    await api('/api/recipes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  }
+  resetRecipeForm(); await loadAll();
 };
 function renderPlanLines() {
   const el = document.getElementById('plan-lines');
-  if (!el.dataset.init) { el.dataset.init = '1'; addPlanLine(); addPlanLine(); }
+  if (!el.dataset.init) { el.dataset.init = '1'; addPlanLine(); }
 }
 function addPlanLine() {
-  const div = document.createElement('div'); div.className = 'row';
-  div.innerHTML = `<select>${recipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty">`;
+  const div = document.createElement('div'); div.className = 'row plan-line';
+  div.innerHTML = `<select>${recipes.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}</select><input type="number" step="0.5" min="0" value="1" style="width:100px" placeholder="Qty"><button type="button" class="ghost small remove-line">Remove</button>`;
+  div.querySelector('.remove-line').onclick = () => {
+    const lines = document.querySelectorAll('#plan-lines .plan-line');
+    if (lines.length <= 1) { alert('A bake needs at least one item. Change this line instead of removing it.'); return; }
+    div.remove();
+  };
   document.getElementById('plan-lines').appendChild(div);
 }
 document.getElementById('add-plan-line').onclick = addPlanLine;
