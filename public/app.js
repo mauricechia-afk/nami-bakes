@@ -8,7 +8,12 @@ const api = (p, opts = {}) => {
   if (key) headers['x-api-key'] = key;
   return fetch(p, { ...opts, headers }).then(async r => { const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = { raw: t }; } if (!r.ok) { const e = new Error(j.error || t); e.status = r.status; throw e; } return j; });
 };
-function showLock() { document.body.classList.add('locked'); document.getElementById('lock-screen').hidden = false; document.getElementById('lock-error').textContent = ''; document.getElementById('lock-password').focus(); }
+function showLock() { document.body.classList.add('locked'); document.getElementById('lock-screen').hidden = false; document.getElementById('lock-error').textContent = ''; document.getElementById('lock-password').value = ''; document.getElementById('lock-password').focus(); }
+function lockOut() {
+  localStorage.removeItem('mep-api-key');
+  document.getElementById('lock-password').value = '';
+  showLock();
+}
 function hideLock() { document.body.classList.remove('locked'); document.getElementById('lock-screen').hidden = true; }
 async function unlock() {
   const key = document.getElementById('lock-password').value;
@@ -416,6 +421,7 @@ async function undoHistory(id) {
   await api('/api/history/' + id + '/undo', { method: 'POST' });
   await loadAll(); await loadHistory();
 }
+document.getElementById('lock-button').onclick = lockOut;
 document.getElementById('lock-unlock').onclick = unlock;
 document.getElementById('lock-password').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
 document.getElementById('lock-toggle').onclick = () => {

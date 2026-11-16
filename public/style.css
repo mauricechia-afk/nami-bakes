@@ -43,7 +43,7 @@
 [data-theme="dark"] .bar{background:#2c4a51}
 /* Lock screen: a solid, opaque overlay, so the app behind it is never
    readable. The app underneath is also blurred while locked. */
-body.locked > :not(.lock-screen){filter:blur(12px);pointer-events:none;user-select:none}
+body.locked header,body.locked nav,body.locked main{filter:blur(12px);pointer-events:none;user-select:none}
 .lock-screen{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:20px;background:linear-gradient(180deg,rgba(8,30,35,.97),rgba(5,15,18,.97));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .lock-screen[hidden]{display:none}
 .lock-card{background:#fffbf8;color:#22201d;border-radius:22px;padding:32px 28px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.45);text-align:center}
