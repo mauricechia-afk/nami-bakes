@@ -15,7 +15,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { load, save } from './lib/store.js';
 import { fmtQty, round3, round2, brownieEggs, planBake, makeCookieDough, shoppingList, costTotals, nextFriday, purchaseUnitsFor, convertPurchase } from './lib/calc.js';
-import { syncOrders } from './lib/shopify.js';
+import { syncOrders, requestShopifyToken } from './lib/shopify.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -196,14 +196,35 @@ function doRestock(ingredientId, amount, unit, price) {
 // access token come from Railway variables (SHOPIFY_STORE_DOMAIN and
 // SHOPIFY_ACCESS_TOKEN), never from the code or the repo.
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || '';
-const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || '';
+const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || ''; // legacy shpat_ token, if one already exists
+const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID || '';
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET || '';
 const SHOPIFY_VERSION = process.env.SHOPIFY_API_VERSION || '2025-10';
-function shopifyConfigured() { return Boolean(SHOPIFY_DOMAIN && SHOPIFY_TOKEN); }
+function shopifyConfigured() { return Boolean(SHOPIFY_DOMAIN && (SHOPIFY_TOKEN || (SHOPIFY_CLIENT_ID && SHOPIFY_CLIENT_SECRET))); }
+// Cached Dev Dashboard token. It expires after 24 hours, so it is
+// refreshed when less than 5 minutes remain, or after a 401.
+let shopifyTokenCache = null;
+async function getShopifyToken() {
+  if (SHOPIFY_TOKEN) return SHOPIFY_TOKEN;
+  if (shopifyTokenCache && shopifyTokenCache.expiresAt > Date.now() + 5 * 60 * 1000) return shopifyTokenCache.token;
+  const { token, expiresIn } = await requestShopifyToken(SHOPIFY_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET);
+  shopifyTokenCache = { token, expiresAt: Date.now() + expiresIn * 1000 };
+  return token;
+}
 async function fetchShopifyOrders() {
-  if (!shopifyConfigured()) throw new Error('Shopify is not connected. Set SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN in Railway variables.');
+  if (!shopifyConfigured()) throw new Error('Shopify is not connected. Set SHOPIFY_STORE_DOMAIN plus SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET in Railway variables (from the app in the Shopify Dev Dashboard). A legacy SHOPIFY_ACCESS_TOKEN also works if you already have one.');
   const fields = 'id,name,created_at,cancelled_at,financial_status,fulfillment_status,note_attributes,line_items,customer';
   const url = `https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_VERSION}/orders.json?status=any&limit=250&fields=${fields}`;
-  const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' } });
+  const call = async () => {
+    const token = await getShopifyToken();
+    return fetch(url, { headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' } });
+  };
+  let res = await call();
+  if (res.status === 401 && !SHOPIFY_TOKEN) {
+    // Token may have expired early. Drop the cache and try once with a fresh one.
+    shopifyTokenCache = null;
+    res = await call();
+  }
   if (!res.ok) throw new Error(`Shopify returned ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.orders || [];

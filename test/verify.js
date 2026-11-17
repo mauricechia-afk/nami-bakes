@@ -2,7 +2,7 @@
 // Starts the server on a temp DB, checks every critical rule, exits non-zero on failure.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { parseNoteAttributes, orderToPlan, syncOrders } from '../lib/shopify.js';
+import { parseNoteAttributes, orderToPlan, syncOrders, requestShopifyToken } from '../lib/shopify.js';
 
 const PORT = 3100;
 const BASE = `http://localhost:${PORT}`;
@@ -207,6 +207,20 @@ try {
   check('Plan making 2 batches is not short of balls for 3 boxes of cookies', ballsPlan.insufficient.length === 0, JSON.stringify(ballsPlan.insufficient));
 
   console.log('Shopify endpoints — not connected without a token');
+  console.log('Shopify token exchange — 2026 Dev Dashboard flow');
+  const stubFetch = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    if (body.grant_type === 'client_credentials' && body.client_id === 'cid' && body.client_secret === 'csec') {
+      return { ok: true, json: async () => ({ access_token: 'shpat_test', expires_in: 86400, scope: 'read_orders,read_products' }) };
+    }
+    return { ok: false, status: 401, text: async () => 'invalid_client' };
+  };
+  const tok = await requestShopifyToken('test.myshopify.com', 'cid', 'csec', stubFetch);
+  check('Client credentials grant returns an access token', tok.token === 'shpat_test' && tok.expiresIn === 86400, JSON.stringify(tok));
+  let tokenFailed = false;
+  try { await requestShopifyToken('test.myshopify.com', 'bad', 'bad', stubFetch); } catch (e) { tokenFailed = e.message.includes('401'); }
+  check('A wrong client ID or secret fails with a clear error', tokenFailed);
+
   const shopStatus = await j('/api/shopify/status');
   check('Shopify status says not configured', shopStatus.configured === false, JSON.stringify(shopStatus));
   const shopSync = await j('/api/shopify/sync', { method: 'POST' });
