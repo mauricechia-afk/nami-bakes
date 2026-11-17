@@ -117,6 +117,11 @@ label{display:block;margin:8px 0;color:var(--teal);font-weight:600;font-size:14p
 .bar.low>div{background:var(--bronze)}
 .bar.below>div{background:var(--red)}
 .bar-label{font-size:13px;color:var(--muted);margin:6px 0 0}
+.checkline{display:inline-flex;align-items:center;gap:8px;margin:12px 0 0}
+.restock-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.restock-row label{display:inline-flex;align-items:center;gap:6px;margin:0}
+.restock-amount{width:100px}
+.restock-price{width:110px}
 .badge{display:inline-block;background:var(--cream);color:var(--teal);border:1px solid var(--line);padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600}
 .warn{color:var(--red);font-weight:600}
 .ok-text{color:var(--teal);font-weight:600}

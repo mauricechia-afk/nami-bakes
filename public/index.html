@@ -76,27 +76,30 @@
       <div id="shopify-flags"></div>
     </div>
     <div class="card">
-      <h3>Plan a bake</h3>
-      <p class="hint">Plan finished items — fractions allowed (e.g. 1.5). The app breaks them into base sub-recipes and shows each one scaled, for baking in one go.</p>
+      <h3 id="plan-form-title">Plan a bake</h3>
+      <h4>When and for whom</h4>
+      <div class="row"><input id="plan-name" placeholder="Plan name (e.g. Mark's brownie)"><input id="plan-date" type="date"></div>
+      <h4 style="margin-top:16px">What you are making</h4>
+      <p class="hint">Fractions allowed (e.g. 1.5). The app breaks everything into base sub-recipes and shows each one scaled, for baking in one go.</p>
       <div id="plan-lines"></div>
       <button id="add-plan-line">+ Add item</button>
+      <label class="checkline"><input type="checkbox" id="dough-only"> Make cookie dough only (no finished items this time)</label>
       <h4 style="margin-top:16px">Cookie dough for this bake</h4>
-      <p class="hint">1 batch = 12 balls (usually 13, count as 12). Dough is made in whole batches. The part used for brookies comes out of it, and all the rest becomes frozen Cookie Dough Balls. Leave blank to make just enough for this bake. Example: 1 brookie uses 0.5 batch, so making 2 batches freezes 18 balls. To make dough only, set the item qty to 0 and set batches below.</p>
-      <label>Batches of cookie dough to make <input id="dough-batches-made" type="number" min="0" step="1" placeholder="Auto — just enough for this bake"></label>
-      <p id="dough-preview" class="hint"></p>
-      <button id="calc-plan">Calculate sub-recipes</button>
-      <div class="row"><input id="plan-name" placeholder="Plan name (e.g. Sat bakes)"><input id="plan-date" type="date"></div>
+      <p class="hint">1 batch = 12 balls (usually 13, count as 12). The part used for brookies comes out of it, and the rest becomes frozen Cookie Dough Balls.</p>
+      <p id="dough-live" class="hint"></p>
+      <label>Batches to make <input id="dough-batches-made" type="number" min="0" step="1" placeholder="Auto — just enough for this bake"></label>
+      <div id="plan-live"></div>
       <button id="save-plan">Save plan</button> <button id="cancel-edit-plan" class="ghost hidden">Cancel edit</button>
+      <p id="plan-saved-note" class="hint"></p>
     </div>
-    <div id="plan-result"></div>
-    <h3>Saved plans</h3>
+    <h3>Your bake plans</h3>
     <div id="saved-plans"></div>
   </section>
 
   <section id="tab-shopping" class="tab">
     <h2>Shopping List — Weekly Restock</h2>
     <p id="friday-note" class="hint"></p>
-    <p class="hint">Flagged weekly: anything below minimum, plus what planned bakes will need. Buy enough to cover planned bakes and get back to the minimum. Items flagged "short before the next shop" will run short before Friday, so buy them sooner if you can. Maurice buys once a week on Friday. Tick an item you bought, enter how much you bought in any unit, and confirm to add it to inventory straight away. Cookie Dough Balls are not on this list, they are made in Batch Planning, not bought.</p>
+    <p class="hint">Flagged weekly: anything below minimum, plus what planned bakes will need. Buy enough to cover planned bakes and get back to the minimum. Items flagged "short before the next shop" will run short before Friday, so buy them sooner if you can. Maurice buys once a week on Friday. Enter how much you bought in any unit and click Add to inventory to add it to stock straight away. Cookie Dough Balls are not on this list, they are made in Batch Planning, not bought.</p>
     <div class="row"><button id="copy-list">Copy List</button><button id="export-csv">Export CSV</button></div>
     <div id="shopping-list"></div>
   </section>

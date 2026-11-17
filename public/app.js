@@ -39,6 +39,8 @@ async function restoreBackup(file) {
   await loadAll(); await loadHistory();
 }
 const fmt = n => { const r = Math.round((Number(n) + Number.EPSILON) * 1000) / 1000; return String(r); };
+function fmtDate(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); }
+function todayISO() { const d = new Date(); const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0'); return `${y}-${m}-${dd}`; }
 let ingredients = [], recipes = [], plans = [];
 
 // Theme and dashboard are per-browser display preferences, saved in
@@ -103,7 +105,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   b.classList.add('active');
   document.getElementById('tab-' + b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'shopping') loadShopping();
-  if (b.dataset.tab === 'planning') { loadPlans(); loadShopifyStatus(); }
+  if (b.dataset.tab === 'planning') { loadPlans(); loadShopifyStatus(); scheduleLiveCalc(); }
   if (b.dataset.tab === 'history') loadHistory();
 });
 
@@ -251,7 +253,15 @@ function addPlanLine(recipeId, qty) {
   document.getElementById('plan-lines').appendChild(div);
 }
 document.getElementById('add-plan-line').onclick = addPlanLine;
+document.getElementById('plan-lines').addEventListener('input', () => { document.getElementById('plan-saved-note').textContent = ''; scheduleLiveCalc(); });
+document.getElementById('dough-batches-made').addEventListener('input', scheduleLiveCalc);
+document.getElementById('dough-only').addEventListener('change', () => {
+  document.getElementById('plan-lines').style.opacity = document.getElementById('dough-only').checked ? '0.4' : '';
+  scheduleLiveCalc();
+});
+document.getElementById('plan-date').value = todayISO();
 function planItems() {
+  if (document.getElementById('dough-only').checked) return [];
   return [...document.querySelectorAll('#plan-lines .row')].map(row => ({ recipeId: row.querySelector('select').value, qty: Number(row.querySelector('input').value) })).filter(x => x.qty > 0);
 }
 function planDough() {
@@ -259,38 +269,53 @@ function planDough() {
   return v === '' || v === null ? undefined : { batchesMade: Number(v) };
 }
 function showPlan(calc) {
-  const el = document.getElementById('plan-result');
-  const doughLine = (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null)
-    ? `<p><strong>Cookie dough:</strong> make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} ${calc.doughUsed === 1 ? 'batch' : 'batches'} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.</p>`
-    : '';
-  el.innerHTML = `<div class="card"><h3>Sub-recipes — make each in one go</h3>
-  ${doughLine}
-  ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
-  ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
-  <h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
+  const el = document.getElementById('plan-live');
+  const doughLine = (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null && calc.doughBatchesMade > 0)
+    ? `Dough: make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.`
+    : 'No dough needed for this bake. Cookie boxes use frozen balls.';
+  document.getElementById('dough-live').textContent = doughLine;
+  el.innerHTML = `<h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
   ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this plan.</p>'}
   ${calc.totalCost !== undefined ? `<h4>Cost</h4><p>${calc.missingPrices && calc.missingPrices.length ? `Cost is incomplete, no price recorded yet for: ${calc.missingPrices.join(', ')}. Add a price when you restock to see the full cost.` : ''}</p><p>Ingredient cost: $${calc.totalCost.toFixed(2)}${calc.totalSell ? `<br>Selling price: $${calc.totalSell.toFixed(2)}<br>Margin: $${calc.margin.toFixed(2)}` : '<br>Add a selling price to the recipe to see the margin.'}</p>` : ''}
-  </div>`;
-  const dough = planDough();
-  if (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null && dough === undefined) {
-    document.getElementById('dough-batches-made').value = calc.doughBatchesMade;
-  }
-  document.getElementById('dough-preview').textContent = calc.ballsAdded > 0
-    ? `On completing this plan, ${fmt(calc.ballsAdded)} balls go to the freezer.`
-    : '';
+  <details><summary>Show sub-recipes (make each in one go)</summary>
+  ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
+  ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
+  </details>`;
 }
-document.getElementById('calc-plan').onclick = async () => {
+// Live totals: recalculate as you type, so there is no Calculate button.
+let liveCalcTimer = null;
+function scheduleLiveCalc() {
+  clearTimeout(liveCalcTimer);
+  liveCalcTimer = setTimeout(liveCalc, 300);
+}
+async function liveCalc() {
+  const el = document.getElementById('plan-live');
+  const doughOnly = document.getElementById('dough-only').checked;
+  const items = planItems();
+  const dough = planDough();
+  if (!items.length && !doughOnly) { el.innerHTML = '<p class="hint">Add an item above to see the ingredients, cost and stock check.</p>'; document.getElementById('dough-live').textContent = ''; return; }
+  if (doughOnly && !dough) { el.innerHTML = '<p class="hint">Set how many batches of dough to make.</p>'; document.getElementById('dough-live').textContent = ''; return; }
   try {
-    const dough = planDough();
-    const body = { items: planItems() };
+    const body = { items };
     if (dough) body.doughBatchesMade = dough.batchesMade;
     showPlan(await api('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
-  } catch (e) { document.getElementById('plan-result').innerHTML = `<div class="card"><p class="warn">${e.message}</p></div>`; }
-};
+  } catch (e) { el.innerHTML = `<p class="warn">${e.message}</p>`; }
+}
+function resetPlanForm() {
+  document.getElementById('plan-lines').innerHTML = '';
+  document.getElementById('plan-lines').dataset.init = '';
+  document.getElementById('plan-name').value = '';
+  document.getElementById('plan-date').value = todayISO();
+  document.getElementById('dough-batches-made').value = '';
+  document.getElementById('dough-only').checked = false;
+  document.getElementById('plan-lines').style.opacity = '';
+  renderPlanLines();
+  scheduleLiveCalc();
+}
 document.getElementById('save-plan').onclick = async () => {
   try {
     const dough = planDough();
-    const body = { name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || new Date().toISOString().slice(0, 10), items: planItems() };
+    const body = { name: document.getElementById('plan-name').value || 'Bake plan', date: document.getElementById('plan-date').value || todayISO(), items: planItems() };
     if (dough) body.doughBatchesMade = dough.batchesMade;
     let plan;
     if (editingPlanId) {
@@ -299,21 +324,20 @@ document.getElementById('save-plan').onclick = async () => {
     } else {
       plan = await api('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     }
-    showPlan(plan.calculation); await loadPlans();
+    document.getElementById('plan-saved-note').textContent = `Saved — ${plan.name}, ${fmtDate(plan.date)}.`;
+    resetPlanForm();
+    await loadPlans();
   } catch (e) { alert(e.message); }
 };
 function cancelPlanEdit() {
   editingPlanId = null;
+  document.getElementById('plan-form-title').textContent = 'Plan a bake';
   document.getElementById('save-plan').textContent = 'Save plan';
   document.getElementById('cancel-edit-plan').classList.add('hidden');
 }
 document.getElementById('cancel-edit-plan').onclick = () => {
   cancelPlanEdit();
-  document.getElementById('plan-lines').innerHTML = '';
-  document.getElementById('plan-lines').dataset.init = '';
-  document.getElementById('plan-name').value = '';
-  document.getElementById('dough-batches-made').value = '';
-  renderPlanLines();
+  resetPlanForm();
 };
 function editPlan(id) {
   const p = plans.find(x => x.id === id);
@@ -325,8 +349,12 @@ function editPlan(id) {
   document.getElementById('plan-name').value = p.name || '';
   document.getElementById('plan-date').value = p.date || '';
   document.getElementById('dough-batches-made').value = p.dough ? p.dough.batchesMade : '';
-  document.getElementById('save-plan').textContent = 'Update plan';
+  document.getElementById('dough-only').checked = p.items.length === 0;
+  document.getElementById('plan-form-title').textContent = 'Edit plan';
+  document.getElementById('save-plan').textContent = 'Save changes';
   document.getElementById('cancel-edit-plan').classList.remove('hidden');
+  document.getElementById('plan-saved-note').textContent = '';
+  scheduleLiveCalc();
   document.querySelector('#tab-planning .card').scrollIntoView({ behavior: 'smooth' });
 }
 async function deletePlan(id) {
@@ -337,9 +365,19 @@ async function deletePlan(id) {
   if (editingPlanId === id) cancelPlanEdit();
   await loadPlans();
 }
+function planCard(p) {
+  const short = p.calculation && p.calculation.insufficient && p.calculation.insufficient.length
+    ? `<br><span class="warn">Short on: ${p.calculation.insufficient.map(i => `${i.name} by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</span>` : '';
+  return `<div class="card"><strong>${p.name}</strong> — ${fmtDate(p.date)}${p.shopifyOrderName ? ` <span class="hint">Shopify ${p.shopifyOrderName}</span>` : ''}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}${short}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Bake it</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`;
+}
 async function loadPlans() {
   plans = await api('/api/bake-plans');
-  document.getElementById('saved-plans').innerHTML = plans.map(p => `<div class="card"><strong>${p.name}</strong> — ${p.date} — ${p.status}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Complete bake (deduct stock)</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`).join('') || '<p>No bake plans yet.</p>';
+  const byDate = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+  const upcoming = plans.filter(p => p.status === 'planned').sort(byDate);
+  const done = plans.filter(p => p.status !== 'planned').sort((a, b) => -byDate(a, b));
+  document.getElementById('saved-plans').innerHTML =
+    (upcoming.map(planCard).join('') || '<p>No bake plans yet.</p>')
+    + (done.length ? `<h4 style="margin-top:16px">Done</h4>${done.map(planCard).join('')}` : '');
 }
 async function completePlan(id) {
   const r = await api('/api/bake-plans/' + id + '/complete', { method: 'POST' });
@@ -353,21 +391,19 @@ async function loadShopping() {
   if (!data.items.length) { list.innerHTML = '<p>All stock levels are healthy.</p>'; window._shopping = data; return; }
   list.innerHTML = data.items.map(i => {
     const units = i.purchaseUnits || [{ unit: i.unit, label: i.unit, perUnit: 1 }];
-    return `<div class="card" data-ingredient="${i.ingredientId}">
-      <label><input type="checkbox" class="restock-bought"> Bought</label>
+    return `<div class="card shop-item" data-ingredient="${i.ingredientId}">
       <strong>${i.name}</strong> — Need ${fmt(i.need)} ${i.unit} (have ${fmt(i.have)}, min ${fmt(i.min)}) — ${i.reason}<br>
-      ${i.shortBeforeNextShop ? `<p class="warn">Short before the next shop${i.shortDate && i.shortDate !== 'now' ? `, on ${i.shortDate}` : ''}. Buy this sooner if you can.</p>` : (i.shortDate ? `<p class="hint">Runs short on ${i.shortDate}.</p>` : '')}
-      <label>Bought <input type="number" class="restock-amount" value="${fmt(i.need)}" min="0" step="any" style="width:100px"></label>
-      <select class="restock-unit">${units.map(u => `<option value="${u.unit}" data-per-unit="${u.perUnit}" ${u.unit === i.unit ? 'selected' : ''}>${u.label}</option>`).join('')}</select>
-      <label>Price paid (SGD, optional) <input type="number" class="restock-price" min="0" step="any" style="width:110px" placeholder="e.g. 12.50"></label>
+      ${i.shortBeforeNextShop ? `<p class="warn">Short before the next shop${i.shortDate && i.shortDate !== 'now' ? `, on ${fmtDate(i.shortDate)}` : ''}. Buy this sooner if you can.</p>` : (i.shortDate ? `<p class="hint">Runs short on ${fmtDate(i.shortDate)}.</p>` : '')}
+      <div class="restock-row"><label>Bought <input type="number" class="restock-amount" value="${fmt(i.need)}" min="0" step="any"></label>
+      <select class="restock-unit">${units.map(u => `<option value="${u.unit}" data-per-unit="${u.perUnit}" ${u.unit === i.unit ? 'selected' : ''}>${u.label}</option>`).join('')}</select></div>
+      <div class="restock-row"><label>Price paid (SGD, optional) <input type="number" class="restock-price" min="0" step="any" placeholder="e.g. 12.50"></label></div>
       <p class="restock-preview hint"></p>
-      <button class="restock-add" disabled>Add to inventory</button>
+      <button class="restock-add">Add to inventory</button>
     </div>`;
   }).join('');
   window._shopping = data;
   list.querySelectorAll('.card').forEach(card => {
     const item = data.items.find(x => x.ingredientId === card.dataset.ingredient);
-    const bought = card.querySelector('.restock-bought');
     const amountEl = card.querySelector('.restock-amount');
     const unitEl = card.querySelector('.restock-unit');
     const preview = card.querySelector('.restock-preview');
@@ -375,6 +411,7 @@ async function loadShopping() {
     const updatePreview = () => {
       const perUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
       const amount = Number(amountEl.value);
+      addBtn.disabled = !(amount > 0 && perUnit);
       if (!amount || amount <= 0 || !perUnit) { preview.textContent = ''; return; }
       const added = Math.round(amount * perUnit * 1000) / 1000;
       preview.textContent = `${fmt(amount)} ${unitEl.value} = ${fmt(added)} ${item.unit} in stock. New stock will be ${fmt(Math.round((item.have + added) * 1000) / 1000)} ${item.unit}.`;
@@ -390,7 +427,6 @@ async function loadShopping() {
     };
     unitEl.dataset.prevPerUnit = Number(unitEl.selectedOptions[0].dataset.perUnit);
     amountEl.oninput = updatePreview; unitEl.onchange = unitEl.onchange;
-    bought.onchange = () => { addBtn.disabled = !bought.checked; };
     updatePreview();
     addBtn.onclick = async () => {
       const amount = Number(amountEl.value), unit = unitEl.value;
@@ -428,7 +464,7 @@ async function loadShopifyStatus() {
     const el = document.getElementById('shopify-status');
     if (!s.configured) { el.textContent = 'Shopify is not connected yet. Set SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN in Railway variables.'; }
     else if (s.lastError) { el.textContent = `Last sync failed: ${s.lastError}`; }
-    else if (s.lastRun) { const r = s.lastResult || {}; el.textContent = `Last sync ${new Date(s.lastRun).toLocaleString('en-SG')}: ${r.created || 0} new plans, ${r.updated || 0} updated, ${r.removed || 0} removed, ${r.flagged || 0} flagged.`; }
+    else if (s.lastRun) { const r = s.lastResult || {}; el.textContent = `Last sync ${new Date(s.lastRun).toLocaleString('en-SG')}: ${r.created || 0} new plans, ${r.updated || 0} updated, ${r.removed || 0} removed, ${r.flagged || 0} flagged, ${r.skipped || 0} skipped (already baked or cancelled).`; }
     else { el.textContent = 'Shopify is connected. No sync has run yet.'; }
     document.getElementById('shopify-flags').innerHTML = f.length ? f.map(x => `<p class="warn">${x.shopifyOrderName || ''}: ${x.reason}</p>`).join('') : '';
   } catch (e) { /* status is best effort */ }
@@ -438,7 +474,7 @@ document.getElementById('sync-shopify').onclick = async () => {
   btn.disabled = true; btn.textContent = 'Syncing…';
   try {
     const r = await api('/api/shopify/sync', { method: 'POST' });
-    alert(`Shopify sync done. Checked ${r.ordersChecked} orders: ${r.create.length} new plans, ${r.update.length} updated, ${r.remove.length} removed, ${r.flags.length} flagged.`);
+    alert(`Shopify sync done. Checked ${r.ordersChecked} orders: ${r.create.length} new plans, ${r.update.length} updated, ${r.remove.length} removed, ${r.flags.length} flagged, ${r.skipped.length} skipped (already baked or cancelled).`);
     await loadAll(); await loadShopifyStatus();
   } catch (e) { alert(e.message); }
   btn.disabled = false; btn.textContent = 'Sync Shopify now';
