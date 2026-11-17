@@ -371,6 +371,11 @@ try {
   check('Dashboard and theme choices persist in localStorage', js.includes("localStorage.getItem('mep-theme')") && js.includes("localStorage.getItem('mep-dashboard')"));
   check('Low stock card says how many items are low, with stock figures', js.includes("'items'} low") && js.includes(" / min "));
   check('Shopify flags have Dismiss and Restore, with a dismissed list', js.includes('dismissShopifyFlag') && js.includes('restoreShopifyFlag') && js.includes('/api/shopify/ignored') && html.includes('id="shopify-ignored"'));
+  check('Banner sentence about server storage is gone', !html.includes('Data is saved on the server'));
+  check('Recipes page has no chef emoji, names are Playfair headings with a bronze meta line', !js.includes('🧑‍🍳') && js.includes('recipe-name') && js.includes('recipe-meta') && js.includes('Selling price $'));
+  check('Recipe cards put Edit and Delete at the top right as quiet text buttons', js.includes('recipe-actions') && js.includes('text-btn') && !js.includes('Edit recipe</button>'));
+  check('Dough-only is a toggle switch on its own line, not a plain checkbox label', html.includes('switch-row') && html.includes('Cookie dough only') && html.includes('just freeze balls') && !html.includes('checkline') && js.includes("document.getElementById('dough-only')"));
+  check('Toggle switch is teal when on, with a sliding knob', css.includes('.switch input:checked + .slider{background:var(--teal)}') && css.includes('.switch input:checked + .slider:before{transform:translateX(20px)}'));
   check('Next bake card puts date and each item on its own line', js.includes('niceDate(next.date)') && js.includes("join('<br>')"));
   check('Planned items use singular/plural, e.g. 1 brownie, 2 brownies', js.includes("itemLabel(i.recipeId, i.qty)") && js.includes("'Brownies') return 'Brownie'"));
 } catch (e) {
