@@ -103,7 +103,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   b.classList.add('active');
   document.getElementById('tab-' + b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'shopping') loadShopping();
-  if (b.dataset.tab === 'planning') loadPlans();
+  if (b.dataset.tab === 'planning') { loadPlans(); loadShopifyStatus(); }
   if (b.dataset.tab === 'history') loadHistory();
 });
 
@@ -421,6 +421,28 @@ async function undoHistory(id) {
   await api('/api/history/' + id + '/undo', { method: 'POST' });
   await loadAll(); await loadHistory();
 }
+async function loadShopifyStatus() {
+  try {
+    const s = await api('/api/shopify/status');
+    const f = await api('/api/shopify/flags');
+    const el = document.getElementById('shopify-status');
+    if (!s.configured) { el.textContent = 'Shopify is not connected yet. Set SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN in Railway variables.'; }
+    else if (s.lastError) { el.textContent = `Last sync failed: ${s.lastError}`; }
+    else if (s.lastRun) { const r = s.lastResult || {}; el.textContent = `Last sync ${new Date(s.lastRun).toLocaleString('en-SG')}: ${r.created || 0} new plans, ${r.updated || 0} updated, ${r.removed || 0} removed, ${r.flagged || 0} flagged.`; }
+    else { el.textContent = 'Shopify is connected. No sync has run yet.'; }
+    document.getElementById('shopify-flags').innerHTML = f.length ? f.map(x => `<p class="warn">${x.shopifyOrderName || ''}: ${x.reason}</p>`).join('') : '';
+  } catch (e) { /* status is best effort */ }
+}
+document.getElementById('sync-shopify').onclick = async () => {
+  const btn = document.getElementById('sync-shopify');
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    const r = await api('/api/shopify/sync', { method: 'POST' });
+    alert(`Shopify sync done. Checked ${r.ordersChecked} orders: ${r.create.length} new plans, ${r.update.length} updated, ${r.remove.length} removed, ${r.flags.length} flagged.`);
+    await loadAll(); await loadShopifyStatus();
+  } catch (e) { alert(e.message); }
+  btn.disabled = false; btn.textContent = 'Sync Shopify now';
+};
 document.getElementById('lock-button').onclick = lockOut;
 document.getElementById('lock-unlock').onclick = unlock;
 document.getElementById('lock-password').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });

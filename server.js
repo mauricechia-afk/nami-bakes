@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { load, save } from './lib/store.js';
 import { fmtQty, round3, round2, brownieEggs, planBake, makeCookieDough, shoppingList, costTotals, nextFriday, purchaseUnitsFor, convertPurchase } from './lib/calc.js';
+import { syncOrders } from './lib/shopify.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -189,6 +190,51 @@ function doRestock(ingredientId, amount, unit, price) {
   return { ingredientId, name: ing.name, unit: ing.unit, boughtAmount: Number(amount), boughtUnit: unit, added, before, after: ing.current, unitPrice, historyId: entry.id };
 }
 
+// ---------- Shopify sync ----------
+// Pulls orders from the Shopify Admin API every hour and turns them into
+// bake plans. See lib/shopify.js for the mapping. The store domain and
+// access token come from Railway variables (SHOPIFY_STORE_DOMAIN and
+// SHOPIFY_ACCESS_TOKEN), never from the code or the repo.
+const SHOPIFY_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN || '';
+const SHOPIFY_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN || '';
+const SHOPIFY_VERSION = process.env.SHOPIFY_API_VERSION || '2025-10';
+function shopifyConfigured() { return Boolean(SHOPIFY_DOMAIN && SHOPIFY_TOKEN); }
+async function fetchShopifyOrders() {
+  if (!shopifyConfigured()) throw new Error('Shopify is not connected. Set SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN in Railway variables.');
+  const fields = 'id,name,created_at,cancelled_at,financial_status,fulfillment_status,note_attributes,line_items,customer';
+  const url = `https://${SHOPIFY_DOMAIN}/admin/api/${SHOPIFY_VERSION}/orders.json?status=any&limit=250&fields=${fields}`;
+  const res = await fetch(url, { headers: { 'X-Shopify-Access-Token': SHOPIFY_TOKEN, 'Content-Type': 'application/json' } });
+  if (!res.ok) throw new Error(`Shopify returned ${res.status}: ${await res.text()}`);
+  const data = await res.json();
+  return data.orders || [];
+}
+async function doShopifySync({ dryRun = false, orders = null } = {}) {
+  const list = orders || await fetchShopifyOrders();
+  const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
+  const result = syncOrders(list, db.bakePlans, balls ? balls.current : 0);
+  if (!dryRun) {
+    for (const p of result.remove) db.bakePlans = db.bakePlans.filter(x => x.id !== p);
+    for (const u of result.update) {
+      const ex = db.bakePlans.find(x => x.id === u.id);
+      if (ex) { ex.name = u.name; ex.date = u.date; ex.items = u.items; ex.dough = u.dough; }
+    }
+    for (const p of result.create) {
+      db.bakePlans.push({ businessId: BUSINESS_ID, id: `plan-shopify-${p.shopifyOrderId}`, name: p.name, date: p.date, items: p.items, dough: p.dough, status: 'planned', createdAt: new Date().toISOString(), shopifyOrderId: p.shopifyOrderId, shopifyOrderName: p.shopifyOrderName });
+    }
+    db.shopifyFlags = result.flags.map(f => ({ ...f, at: new Date().toISOString() }));
+    db.shopifySync = { lastRun: new Date().toISOString(), lastResult: { created: result.create.length, updated: result.update.length, removed: result.remove.length, flagged: result.flags.length, skipped: result.skipped.length }, lastError: null, configured: shopifyConfigured() };
+    persist();
+  }
+  return { ...result, dryRun, ordersChecked: list.length };
+}
+// Hourly pull, only when Shopify is connected. Errors are recorded on the
+// status, never thrown, so a failed pull does not crash the server.
+setInterval(async () => {
+  if (!shopifyConfigured()) return;
+  try { await doShopifySync(); console.log('Shopify sync ran', db.shopifySync.lastResult); }
+  catch (e) { console.error('Shopify sync failed:', e.message); db.shopifySync = { lastRun: new Date().toISOString(), lastResult: null, lastError: e.message, configured: true }; persist(); }
+}, 60 * 60 * 1000);
+
 // ---------- MCP server ----------
 function createMcpServer() {
   const server = new McpServer({ name: 'nami-bakes', version: '1.0.0' });
@@ -270,6 +316,10 @@ function createMcpServer() {
       db.bakePlans = db.bakePlans.filter(x => x.id !== id); persist();
       return { content: [{ type: 'text', text: JSON.stringify({ deleted: id }) }] };
     });
+  server.tool('shopify_sync', 'Pull Shopify orders and turn them into bake plans. dryRun true previews without changing anything.', { dryRun: z.boolean().optional() },
+    async ({ dryRun }) => ({ content: [{ type: 'text', text: JSON.stringify(await doShopifySync({ dryRun: dryRun === true })) }] }));
+  server.tool('shopify_status', 'Last Shopify sync: when it ran, what it created, updated, removed and flagged, and any error.', {},
+    async () => ({ content: [{ type: 'text', text: JSON.stringify(db.shopifySync || { configured: shopifyConfigured() }) }] }));
   server.tool('get_shopping_list', 'Friday shopping list: below-min items plus projected need from planned bakes.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
   server.tool('get_restock_forecast', 'Alias for get_shopping_list: weekly restock forecast for the Friday shop.', {},
@@ -308,6 +358,20 @@ const server = http.createServer(async (req, res) => {
       // When a shared password is set (NAMI_API_KEY), every API route needs
       // it, including reads. The frontend sends it once the user unlocks.
       if (API_KEY && req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: 'Locked. Enter the shared password to unlock.' });
+      if (req.method === 'GET' && pathname === '/api/shopify/status') return send(res, 200, db.shopifySync || { configured: shopifyConfigured(), lastRun: null, lastResult: null, lastError: null });
+      if (req.method === 'GET' && pathname === '/api/shopify/flags') return send(res, 200, db.shopifyFlags || []);
+      if (req.method === 'GET' && pathname === '/api/shopify/preview') {
+        try { return send(res, 200, await doShopifySync({ dryRun: true })); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (req.method === 'POST' && pathname === '/api/shopify/sync') {
+        try { return send(res, 200, await doShopifySync({})); }
+        catch (e) {
+          db.shopifySync = { lastRun: new Date().toISOString(), lastResult: null, lastError: e.message, configured: shopifyConfigured() };
+          persist();
+          return send(res, 400, { error: e.message });
+        }
+      }
       if (req.method === 'GET' && pathname === '/api/backup') return send(res, 200, db);
       if (req.method === 'POST' && pathname === '/api/backup') {
         const b = await readBody(req);

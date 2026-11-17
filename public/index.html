@@ -69,6 +69,13 @@
   <section id="tab-planning" class="tab">
     <h2>Batch Planning</h2>
     <div class="card">
+      <h3>Shopify orders</h3>
+      <p class="hint">Pulls orders from Shopify every hour and turns them into bake plans, dated on the pickup or delivery date from the order. A box of cookies uses frozen balls first, and only makes new dough for the shortfall. Orders with no date, or a product with no mapping, are flagged below, never planned on the order date.</p>
+      <div class="row"><button id="sync-shopify">Sync Shopify now</button></div>
+      <p id="shopify-status" class="hint"></p>
+      <div id="shopify-flags"></div>
+    </div>
+    <div class="card">
       <h3>Plan a bake</h3>
       <p class="hint">Plan finished items — fractions allowed (e.g. 1.5). The app breaks them into base sub-recipes and shows each one scaled, for baking in one go.</p>
       <div id="plan-lines"></div>

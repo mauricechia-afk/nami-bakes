@@ -2,6 +2,7 @@
 // Starts the server on a temp DB, checks every critical rule, exits non-zero on failure.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { parseNoteAttributes, orderToPlan, syncOrders } from '../lib/shopify.js';
 
 const PORT = 3100;
 const BASE = `http://localhost:${PORT}`;
@@ -181,6 +182,35 @@ try {
   check('1 brownie costs $3 in eggs at $1 per egg', eq(costPlan.totalCost, 3), JSON.stringify(costPlan));
   check('Bake cost lists ingredients with no price yet', costPlan.missingPrices.includes('Flour'));
   await j('/api/inventory/eggs', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current: 5 }) });
+
+  console.log('Shopify mapping — fixture orders from the CSV export');
+  const naDelivery = parseNoteAttributes('Delivery Method: delivery\nDelivery Date: 15-11-2026\nDelivery Time: 10:00 AM - 11:00 AM');
+  check('Delivery note attributes give date 2026-11-15, method delivery', naDelivery.date === '2026-11-15' && naDelivery.method === 'delivery' && naDelivery.time === '10:00 AM - 11:00 AM', JSON.stringify(naDelivery));
+  const naPickup = parseNoteAttributes([{ name: 'Pickup Date', value: '14-11-2026' }, { name: 'Pickup Time', value: '4:00 PM - 4:30 PM' }, { name: 'Delivery Method', value: 'pickup' }]);
+  check('Pickup note attributes give date 2026-11-14', naPickup.date === '2026-11-14' && naPickup.method === 'pickup', JSON.stringify(naPickup));
+  check('No date in note attributes gives null date, never the order date', parseNoteAttributes('').date === null);
+  const order1015 = { id: 1015, name: '#1015', created_at: '2026-11-13', note_attributes: [{ name: 'Delivery Method', value: 'delivery' }, { name: 'Delivery Date', value: '15-11-2026' }, { name: 'Delivery Time', value: '10:00 AM - 11:00 AM' }], line_items: [{ title: 'Dark Chocolate Sea Salt Brownies, Box of 16', sku: 'NB-SSB-16', quantity: 1 }, { title: 'Dark Chocolate Sea Salt Brookie, Box of 16', sku: '', quantity: 1 }] };
+  const p1015 = orderToPlan(order1015, 33);
+  check('Order #1015 plans 1 brownie + 1 brookie on 2026-11-15', p1015.plan && p1015.plan.date === '2026-11-15' && JSON.stringify(p1015.plan.items) === JSON.stringify([{ recipeId: 'brownies', qty: 1 }, { recipeId: 'brookie', qty: 1 }]), JSON.stringify(p1015));
+  check('Order #1015 makes 1 batch of dough for the brookie', p1015.plan && p1015.plan.dough && p1015.plan.dough.batchesMade === 1, JSON.stringify(p1015.plan && p1015.plan.dough));
+  const cookiesOrder = { id: 1004, name: '#1004', note_attributes: [{ name: 'Delivery Date', value: '13-10-2026' }], line_items: [{ title: 'Dark Chocolate Chip Cookies, Box of 6', sku: '', quantity: 3 }] };
+  check('3 boxes of cookies with 33 balls on hand makes no dough', orderToPlan(cookiesOrder, 33).plan.dough === null);
+  check('3 boxes of cookies with 5 balls on hand makes 2 batches (18 needed, 13 short)', orderToPlan(cookiesOrder, 5).plan.dough.batchesMade === 2);
+  check('Order with no date is flagged, never planned on the order date', orderToPlan({ id: 1009, name: '#1009', note_attributes: [], line_items: [{ title: 'Dark Chocolate Chip Cookies, Box of 6', quantity: 1 }] }, 33).flag.kind === 'no-date');
+  check('Cancelled order is flagged cancelled', orderToPlan({ id: 1001, name: '#1001', cancelled_at: '2026-09-25', note_attributes: [], line_items: [] }, 33).flag.kind === 'cancelled');
+  const existing = [{ id: 'plan-shopify-1015', shopifyOrderId: '1015', name: '#1015', date: '2026-11-15', items: [{ recipeId: 'brownies', qty: 1 }, { recipeId: 'brookie', qty: 1 }], dough: { batchesMade: 1 }, status: 'planned' }];
+  const syncSame = syncOrders([order1015], existing, 33);
+  check('Pulling the same order twice creates nothing and updates nothing', syncSame.create.length === 0 && syncSame.update.length === 0, JSON.stringify(syncSame));
+  const syncCancelled = syncOrders([{ id: 1001, name: '#1001', cancelled_at: '2026-09-25', line_items: [] }], [{ id: 'plan-shopify-1001', shopifyOrderId: '1001', status: 'planned' }], 33);
+  check('A cancelled order removes its planned bake plan', syncCancelled.remove.length === 1 && syncCancelled.remove[0] === 'plan-shopify-1001');
+  const ballsPlan = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'cookies-from-balls', qty: 3 }], doughBatchesMade: 2 }) });
+  check('Plan making 2 batches is not short of balls for 3 boxes of cookies', ballsPlan.insufficient.length === 0, JSON.stringify(ballsPlan.insufficient));
+
+  console.log('Shopify endpoints — not connected without a token');
+  const shopStatus = await j('/api/shopify/status');
+  check('Shopify status says not configured', shopStatus.configured === false, JSON.stringify(shopStatus));
+  const shopSync = await j('/api/shopify/sync', { method: 'POST' });
+  check('Shopify sync without a token fails with a clear message', typeof shopSync.error === 'string' && shopSync.error.includes('not connected'), JSON.stringify(shopSync));
 
   console.log('Backup — full export and restore');
   const backup = await j('/api/backup');
