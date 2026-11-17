@@ -64,9 +64,11 @@ function undoHistory(id) {
     ing.current = round3(e.before);
     if (e.type === 'restock' && e.lastPriceBefore !== undefined) { ing.lastPrice = e.lastPriceBefore; }
   } else if (e.type === 'bake-complete') {
-    const plan = db.bakePlans.find(p => p.id === e.planId);
-    if (!plan) throw new Error('Bake plan not found');
-    if (plan.status !== 'completed') throw new Error('Bake plan is not completed');
+    // A group bake stores planIds; a single bake stores planId.
+    const ids = e.planIds && e.planIds.length ? e.planIds : [e.planId];
+    const plans = ids.map(id => db.bakePlans.find(p => p.id === id));
+    if (plans.some(p => !p)) throw new Error('Bake plan not found');
+    if (plans.some(p => p.status !== 'completed')) throw new Error('Bake plan is not completed');
     for (const t of e.deducted || []) {
       const ing = db.ingredients.find(i => i.id === t.ingredientId);
       if (ing) ing.current = round3(ing.current + t.qty);
@@ -75,9 +77,11 @@ function undoHistory(id) {
       const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
       if (balls) balls.current = round3(balls.current - e.ballsAdded);
     }
-    plan.status = 'planned';
-    delete plan.completedAt;
-    delete plan.cost;
+    for (const plan of plans) {
+      plan.status = 'planned';
+      delete plan.completedAt;
+      delete plan.cost;
+    }
   } else {
     throw new Error('This change cannot be undone');
   }
@@ -130,6 +134,81 @@ function doCompleteBake(planId) {
   const entry = logHistory({ type: 'bake-complete', planId: plan.id, name: plan.name, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, cost: plan.cost });
   persist();
   return { plan, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, historyId: entry.id };
+}
+// ---------- Batch baking: bake several plans together ----------
+// Combine the items of several planned plans and calculate once, so the
+// maths matches baking in one go: 2 brookies are 1 brownie portion (3
+// eggs), not 2 separate halves (2 + 2 eggs). Dough is worked out again
+// from the combined total, never by adding up the per-plan numbers, or
+// two 1-brookie plans would each make a batch. The minimum is 1 full
+// batch whenever any dough is needed. A dough-only plan in the selection
+// adds its batches on top. A manual dough number on the session card
+// overrides all of this.
+function sessionCalc(planIds, doughBatchesMade) {
+  if (!Array.isArray(planIds) || !planIds.length) throw new Error('Select at least one bake plan');
+  const plans = planIds.map(id => db.bakePlans.find(p => p.id === id));
+  if (plans.some(p => !p)) throw new Error('Bake plan not found');
+  if (plans.some(p => p.status !== 'planned')) throw new Error('Only planned bake plans can be baked together. One of the selected plans is already completed.');
+  const items = [];
+  for (const p of plans) {
+    for (const i of p.items || []) {
+      const ex = items.find(x => x.recipeId === i.recipeId);
+      if (ex) ex.qty += i.qty; else items.push({ recipeId: i.recipeId, qty: i.qty });
+    }
+  }
+  let batches;
+  if (Number.isFinite(Number(doughBatchesMade))) {
+    batches = Number(doughBatchesMade);
+  } else {
+    // Auto now returns whole batches (see planBake), so this is the
+    // combined whole-batch number. Dough-only plans add their batches.
+    const auto = doPlan(items, undefined).doughBatchesMade || 0;
+    const doughOnlyExtra = plans
+      .filter(p => !(p.items || []).length && p.dough && Number.isFinite(Number(p.dough.batchesMade)))
+      .reduce((s, p) => s + Number(p.dough.batchesMade), 0);
+    batches = auto + doughOnlyExtra;
+  }
+  const calc = doPlan(items, batches > 0 ? { batchesMade: batches } : undefined);
+  return { plans, items, doughBatchesMade: batches, calc };
+}
+function doCompleteSession(planIds, doughBatchesMade) {
+  const { plans, calc } = sessionCalc(planIds, doughBatchesMade);
+  if (calc.insufficient.length) {
+    throw new Error('Not enough stock: ' + calc.insufficient.map(i => `${i.name} needs ${fmtQty(i.qty)} ${i.unit}, have ${fmtQty(i.have)}`).join('; '));
+  }
+  for (const t of calc.totals) {
+    const ing = db.ingredients.find(i => i.id === t.ingredientId);
+    if (ing) ing.current = round3(ing.current - t.qty);
+  }
+  if (calc.ballsAdded > 0) {
+    const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
+    if (balls) balls.current = round3(balls.current + calc.ballsAdded);
+  }
+  const now = new Date().toISOString();
+  // The combined cost belongs to the bake as a whole, so it lives on the
+  // History entry, not split across the plans. Splitting it would make
+  // each plan look like it cost the whole bake.
+  const cost = { totalCost: calc.totalCost, totalSell: calc.totalSell, margin: calc.margin, costs: calc.costs };
+  for (const plan of plans) {
+    plan.status = 'completed';
+    plan.completedAt = now;
+  }
+  const entry = logHistory({ type: 'bake-complete', planIds: plans.map(p => p.id), name: plans.map(p => p.name).join(', '), deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, cost });
+  persist();
+  return { plans, deducted: calc.totals, ballsAdded: calc.ballsAdded || 0, historyId: entry.id };
+}
+function historySummary() {
+  const bakes = (db.history || []).filter(e => e.type === 'bake-complete' && !e.undone && e.cost);
+  const totalCost = round2(bakes.reduce((s, e) => s + (e.cost.totalCost || 0), 0));
+  const totalSell = round2(bakes.reduce((s, e) => s + (e.cost.totalSell || 0), 0));
+  const totalMargin = round2(totalSell - totalCost);
+  return {
+    bakes: bakes.length,
+    totalCost, totalSell, totalMargin,
+    averageCost: bakes.length ? round2(totalCost / bakes.length) : 0,
+    averageSell: bakes.length ? round2(totalSell / bakes.length) : 0,
+    averageMargin: bakes.length ? round2(totalMargin / bakes.length) : 0,
+  };
 }
 function doMakeDough(input) {
   const result = makeCookieDough(input, db.recipes, db.ingredients);
@@ -313,6 +392,8 @@ function createMcpServer() {
       if (!p) throw new Error('Bake plan not found');
       return { content: [{ type: 'text', text: JSON.stringify({ ...p, calculation: doPlan(p.items, p.dough) }) }] };
     });
+  server.tool('complete_bake_session', 'Bake several planned bake plans together: combine their items, calculate once, deduct once, mark all completed.', { planIds: z.array(z.string()).min(1), doughBatchesMade: z.number().optional() },
+    async ({ planIds, doughBatchesMade }) => ({ content: [{ type: 'text', text: JSON.stringify(doCompleteSession(planIds, doughBatchesMade)) }] }));
   server.tool('complete_bake', 'Complete a saved bake plan: deducts aggregated ingredients from inventory.', { id: z.string() },
     async ({ id }) => ({ content: [{ type: 'text', text: JSON.stringify(doCompleteBake(id)) }] }));
   server.tool('update_bake_plan', 'Edit a saved bake plan that is still planned (completed plans cannot be edited, their stock is already deducted). Change name, date, items and/or doughBatchesMade.', { id: z.string(), name: z.string().optional(), date: z.string().optional(), items: z.array(z.object(itemShape)).optional(), doughBatchesMade: z.number().optional() },
@@ -416,6 +497,15 @@ const server = http.createServer(async (req, res) => {
         db.ingredients.push(ing); persist(); return send(res, 201, ing);
       }
       if (req.method === 'GET' && pathname === '/api/history') return send(res, 200, [...(db.history || [])].reverse());
+      if (req.method === 'GET' && pathname === '/api/history/summary') return send(res, 200, historySummary());
+      if (req.method === 'POST' && pathname === '/api/bake-sessions/preview') {
+        try { const b = await readBody(req); return send(res, 200, sessionCalc(b.planIds, b.doughBatchesMade)); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
+      if (req.method === 'POST' && pathname === '/api/bake-sessions/complete') {
+        try { const b = await readBody(req); return send(res, 200, doCompleteSession(b.planIds, b.doughBatchesMade)); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
       const historyMatch = pathname.match(/^\/api\/history\/([\w-]+)\/undo$/);
       if (historyMatch && req.method === 'POST') {
         if (!requireKey(req, res)) return;

@@ -46,7 +46,7 @@ try {
   check('A brownie eggs = 5', eq(aEggs, 5), `got ${aEggs}`);
   check('A brownie butter 187.5g', eq(aBrownie.ingredients.find(i => i.ingredientId === 'unsalted-butter')?.qty, 187.5));
   const aTotalEggs = a.totals.find(t => t.ingredientId === 'eggs')?.qty;
-  check('A total eggs = 5.5 (5 brownie + 0.5 cookie)', eq(aTotalEggs, 5.5), `got ${aTotalEggs}`);
+  check('A total eggs = 6 (5 brownie + 1 whole batch of dough, 0.5 used, 6 balls frozen)', eq(aTotalEggs, 6), `got ${aTotalEggs}`);
 
   console.log('Plan B: 2 brookies + 1 brownie');
   const b = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 2 }, { recipeId: 'brownies', qty: 1 }] }) });
@@ -60,7 +60,7 @@ try {
 
   console.log('Single Brookie');
   const s = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }] }) });
-  check('Single brookie total eggs = 2.5', eq(s.totals.find(t => t.ingredientId === 'eggs')?.qty, 2.5));
+  check('Single brookie total eggs = 3 (2 brownie + 1 whole batch of dough)', eq(s.totals.find(t => t.ingredientId === 'eggs')?.qty, 3), `got ${s.totals.find(t => t.ingredientId === 'eggs')?.qty}`);
 
   console.log('Merged dough: Peishi case — 1 brookie + 1 brownie, make 2 batches of dough');
   const p = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }, { recipeId: 'brownies', qty: 1 }], doughBatchesMade: 2 }) });
@@ -157,7 +157,7 @@ try {
 
   console.log('Egg rule rounds aggregate up to nearest 0.5 portion');
   const brookie15 = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1.5 }] }) });
-  check('1.5 brookies = 0.75 brownie portions -> 3 brownie eggs, total eggs 3.75', eq(brookie15.totals.find(t => t.ingredientId === 'eggs')?.qty, 3.75), JSON.stringify(brookie15.totals));
+  check('1.5 brookies = 0.75 brownie portions -> 3 brownie eggs, total eggs 4 (3 brownie + 1 dough batch)', eq(brookie15.totals.find(t => t.ingredientId === 'eggs')?.qty, 4), JSON.stringify(brookie15.totals));
 
   console.log('Stock history and undo');
   const histBefore = await j('/api/history');
@@ -211,6 +211,35 @@ try {
   check('Plan making 2 batches is not short of balls for 3 boxes of cookies', ballsPlan.insufficient.length === 0, JSON.stringify(ballsPlan.insufficient));
   const doughOnlyPlan = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [], doughBatchesMade: 1 }) });
   check('Dough-only plan makes 1 batch and freezes 12 balls', doughOnlyPlan.doughBatchesMade === 1 && doughOnlyPlan.ballsAdded === 12, JSON.stringify(doughOnlyPlan));
+
+  console.log('Batch baking — several plans together');
+  const mkPlan = async (name, items, dough) => j('/api/bake-plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, date: '2026-11-20', items, ...(dough ? { doughBatchesMade: dough } : {}) }) });
+  const brookieA = await mkPlan('Brookie A', [{ recipeId: 'brookie', qty: 1 }]);
+  const brookieB = await mkPlan('Brookie B', [{ recipeId: 'brookie', qty: 1 }]);
+  const sessionPreview = await j('/api/bake-sessions/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planIds: [brookieA.id, brookieB.id] }) });
+  const eggsTotal = sessionPreview.calc.totals.find(t => t.ingredientId === 'eggs');
+  check('Two brookies baked together need 4 eggs, not 5', eggsTotal && eggsTotal.qty === 4, JSON.stringify(eggsTotal));
+  check('Two brookies baked together need 1 batch of dough, not 2, and freeze 0 balls (a full batch is used)', sessionPreview.calc.doughBatchesMade === 1 && sessionPreview.calc.ballsAdded === 0, JSON.stringify({ d: sessionPreview.calc.doughBatchesMade, b: sessionPreview.calc.ballsAdded }));
+  const oneBrookie = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }] }) });
+  check('One brookie on Auto makes 1 full batch and freezes 6 balls', oneBrookie.doughBatchesMade === 1 && oneBrookie.ballsAdded === 6, JSON.stringify({ d: oneBrookie.doughBatchesMade, b: oneBrookie.ballsAdded }));
+  const doughOnly = await mkPlan('Dough only', [], 2);
+  const sessionWithDough = await j('/api/bake-sessions/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planIds: [brookieA.id, doughOnly.id] }) });
+  check('A dough-only plan adds its batches on top of the auto dough', sessionWithDough.calc.doughBatchesMade === 3, JSON.stringify({ d: sessionWithDough.calc.doughBatchesMade }));
+  const eggsBefore = (await j('/api/inventory')).find(i => i.id === 'eggs').current;
+  const ballsBefore = (await j('/api/inventory')).find(i => i.id === 'cookie-dough-balls').current;
+  const sessionDone = await j('/api/bake-sessions/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planIds: [brookieA.id, brookieB.id] }) });
+  check('Session completes both plans at once', sessionDone.plans.length === 2 && sessionDone.plans.every(p => p.status === 'completed'));
+  const eggsAfter = (await j('/api/inventory')).find(i => i.id === 'eggs').current;
+  const ballsAfter = (await j('/api/inventory')).find(i => i.id === 'cookie-dough-balls').current;
+  check('Session deducts eggs once for both plans', eggsAfter === eggsBefore - 4, `${eggsBefore} -> ${eggsAfter}`);
+  check('Session freezes 0 balls for the two brookies (the full batch is used)', ballsAfter === ballsBefore, `${ballsBefore} -> ${ballsAfter}`);
+  const undoSession = await j('/api/history/' + sessionDone.historyId + '/undo', { method: 'POST' });
+  check('Undoing a group bake puts stock back and un-completes both plans', undoSession && (await j('/api/inventory')).find(i => i.id === 'eggs').current === eggsBefore, JSON.stringify(undoSession));
+  const bigPlan = await mkPlan('Too big', [{ recipeId: 'brownies', qty: 10 }]);
+  const tooBig = await j('/api/bake-sessions/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planIds: [bigPlan.id] }) });
+  check('A session short on stock fails and deducts nothing', typeof tooBig.error === 'string' && tooBig.error.includes('Not enough stock') && (await j('/api/bake-plans')).find(p => p.id === bigPlan.id).status === 'planned', JSON.stringify(tooBig));
+  const summary = await j('/api/history/summary');
+  check('History summary counts bakes and money', typeof summary.bakes === 'number' && typeof summary.totalMargin === 'number', JSON.stringify(summary));
 
   console.log('Shopify endpoints — not connected without a token');
   console.log('Shopify token exchange — 2026 Dev Dashboard flow');

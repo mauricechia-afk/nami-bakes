@@ -368,8 +368,65 @@ async function deletePlan(id) {
 function planCard(p) {
   const short = p.calculation && p.calculation.insufficient && p.calculation.insufficient.length
     ? `<br><span class="warn">Short on: ${p.calculation.insufficient.map(i => `${i.name} by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</span>` : '';
-  return `<div class="card"><strong>${p.name}</strong> — ${fmtDate(p.date)}${p.shopifyOrderName ? ` <span class="hint">Shopify ${p.shopifyOrderName}</span>` : ''}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}${short}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Bake it</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`;
+  return `<div class="card">${p.status === 'planned' ? `<label class="plan-check"><input type="checkbox" class="plan-select" data-id="${p.id}" ${selectedPlans.has(p.id) ? 'checked' : ''}> Bake together</label>` : ''}<strong>${p.name}</strong> — ${fmtDate(p.date)}${p.shopifyOrderName ? ` <span class="hint">Shopify ${p.shopifyOrderName}</span>` : ''}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}${short}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Bake it</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`;
 }
+const selectedPlans = new Set();
+let sessionTimer = null;
+function updateSession() {
+  const card = document.getElementById('bake-session');
+  const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
+  if (!chosen.length) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  document.getElementById('session-plans').textContent = `Baking together: ${chosen.map(p => `${p.name} (${fmtDate(p.date)})`).join(', ')}.`;
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(previewSession, 200);
+}
+async function previewSession() {
+  const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
+  if (!chosen.length) return;
+  const el = document.getElementById('session-live');
+  const btn = document.getElementById('session-complete');
+  const doughInput = document.getElementById('session-dough-batches').value;
+  try {
+    const body = { planIds: chosen.map(p => p.id) };
+    if (doughInput !== '' && doughInput !== null) body.doughBatchesMade = Number(doughInput);
+    const r = await api('/api/bake-sessions/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const calc = r.calc;
+    document.getElementById('session-dough').textContent = calc.doughBatchesMade > 0
+      ? `Dough: make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.`
+      : 'No dough needed for this bake. Cookie boxes use frozen balls.';
+    el.innerHTML = `<h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
+    ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this bake.</p>'}
+    ${calc.totalCost !== undefined ? `<h4>Cost</h4><p>Ingredient cost: $${calc.totalCost.toFixed(2)}${calc.totalSell ? `<br>Selling price: $${calc.totalSell.toFixed(2)}<br>Margin: $${calc.margin.toFixed(2)}` : ''}</p>` : ''}
+    <details><summary>Show sub-recipes (make each in one go)</summary>
+    ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
+    ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
+    </details>`;
+    btn.disabled = calc.insufficient.length > 0;
+  } catch (e) { el.innerHTML = `<p class="warn">${e.message}</p>`; btn.disabled = true; }
+}
+document.getElementById('session-dough-batches').addEventListener('input', () => previewSession());
+document.getElementById('session-clear').onclick = () => { selectedPlans.clear(); document.getElementById('session-dough-batches').value = ''; updateSession(); loadPlans(); };
+document.getElementById('session-complete').onclick = async () => {
+  const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
+  if (!chosen.length) return;
+  const doughInput = document.getElementById('session-dough-batches').value;
+  const body = { planIds: chosen.map(p => p.id) };
+  if (doughInput !== '' && doughInput !== null) body.doughBatchesMade = Number(doughInput);
+  if (!confirm(`Bake ${chosen.length} ${chosen.length === 1 ? 'plan' : 'plans'} together (${chosen.map(p => p.name).join(', ')}) and deduct the combined ingredients from stock?`)) return;
+  try {
+    const r = await api('/api/bake-sessions/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    selectedPlans.clear();
+    document.getElementById('session-dough-batches').value = '';
+    alert(`Baked together. ${r.ballsAdded > 0 ? `${r.ballsAdded} balls added to the freezer. ` : ''}Stock deducted for ${chosen.length} plans.`);
+    await loadAll(); await loadPlans(); updateSession();
+  } catch (e) { alert(e.message); }
+};
+document.getElementById('select-today').onclick = () => {
+  const today = todayISO();
+  plans.filter(p => p.status === 'planned' && p.date === today).forEach(p => selectedPlans.add(p.id));
+  loadPlans(); updateSession();
+};
 async function loadPlans() {
   plans = await api('/api/bake-plans');
   const byDate = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
@@ -378,6 +435,9 @@ async function loadPlans() {
   document.getElementById('saved-plans').innerHTML =
     (upcoming.map(planCard).join('') || '<p>No bake plans yet.</p>')
     + (done.length ? `<h4 style="margin-top:16px">Done</h4>${done.map(planCard).join('')}` : '');
+  document.querySelectorAll('.plan-select').forEach(cb => {
+    cb.onchange = () => { if (cb.checked) selectedPlans.add(cb.dataset.id); else selectedPlans.delete(cb.dataset.id); updateSession(); };
+  });
 }
 async function completePlan(id) {
   const r = await api('/api/bake-plans/' + id + '/complete', { method: 'POST' });
@@ -450,7 +510,9 @@ document.getElementById('copy-list').onclick = async () => { const d = window._s
 document.getElementById('export-csv').onclick = () => window.open('/api/shopping-list.csv', '_blank');
 async function loadHistory() {
   const list = await api('/api/history');
-  document.getElementById('history-list').innerHTML = list.map(e => `<div class="card"><strong>${e.type === 'bake-complete' ? 'Bake completed' : e.type === 'restock' ? 'Restocked' : 'Stock adjusted'}: ${e.name || ''}</strong><br><span class="hint">${new Date(e.at).toLocaleString('en-SG')}</span><br>${e.type === 'bake-complete' ? `Deducted: ${(e.deducted || []).map(t => `${fmt(t.qty)} ${t.unit} ${t.name}`).join(', ')}${e.ballsAdded ? `, froze ${fmt(e.ballsAdded)} balls` : ''}` : `${fmt(e.before)} to ${fmt(e.after)} ${e.unit || ''}${e.added ? `, added ${fmt(e.added)}` : ''}`}${e.undone ? ' — <span class="warn">undone</span>' : ` <button class="ghost small" onclick="undoHistory('${e.id}')">Undo</button>`}</div>`).join('') || '<p>No stock changes yet.</p>';
+  const s = await api('/api/history/summary');
+  const summary = s.bakes ? `<div class="card"><strong>Cost and profit so far</strong><br>${s.bakes} ${s.bakes === 1 ? 'bake' : 'bakes'} completed — ingredient cost $${s.totalCost.toFixed(2)}, selling price $${s.totalSell.toFixed(2)}, margin $${s.totalMargin.toFixed(2)}.<br>Average per bake: cost $${s.averageCost.toFixed(2)}, margin $${s.averageMargin.toFixed(2)}.</div>` : '';
+  document.getElementById('history-list').innerHTML = summary + (list.map(e => `<div class="card"><strong>${e.type === 'bake-complete' ? 'Bake completed' : e.type === 'restock' ? 'Restocked' : 'Stock adjusted'}: ${e.name || ''}</strong><br><span class="hint">${new Date(e.at).toLocaleString('en-SG')}</span><br>${e.type === 'bake-complete' ? `Deducted: ${(e.deducted || []).map(t => `${fmt(t.qty)} ${t.unit} ${t.name}`).join(', ')}${e.ballsAdded ? `, froze ${fmt(e.ballsAdded)} balls` : ''}${e.cost ? `<br>Cost $${e.cost.totalCost.toFixed(2)}${e.cost.totalSell ? `, selling price $${e.cost.totalSell.toFixed(2)}, margin $${e.cost.margin.toFixed(2)}` : ''}` : ''}` : `${fmt(e.before)} to ${fmt(e.after)} ${e.unit || ''}${e.added ? `, added ${fmt(e.added)}` : ''}`}${e.undone ? ' — <span class="warn">undone</span>' : ` <button class="ghost small" onclick="undoHistory('${e.id}')">Undo</button>`}</div>`).join('') || '<p>No stock changes yet.</p>');
 }
 async function undoHistory(id) {
   if (!confirm('Undo this change? Stock will be put back.')) return;
