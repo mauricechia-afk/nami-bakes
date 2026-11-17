@@ -92,14 +92,22 @@
       <button id="save-plan">Save plan</button> <button id="cancel-edit-plan" class="ghost hidden">Cancel edit</button>
       <p id="plan-saved-note" class="hint"></p>
     </div>
-    <div id="bake-session" class="card sticky hidden">
-      <h3>Baking together</h3>
-      <p id="session-plans" class="hint"></p>
-      <p id="session-dough" class="hint"></p>
-      <label>Batches of dough to make <input id="session-dough-batches" type="number" min="0" step="1" placeholder="Auto"></label>
-      <div id="session-live"></div>
-      <button id="session-complete">Baked it, deduct stock</button>
-      <button id="session-clear" class="ghost">Clear selection</button>
+    <div id="bake-session" class="hidden">
+      <div class="card session-bar">
+        <span id="session-summary" class="session-summary"></span>
+        <span class="session-actions">
+          <button id="session-toggle" class="ghost small">Recipe</button>
+          <button id="session-complete">Baked it</button>
+          <button id="session-clear" class="ghost small" aria-label="Clear selection">×</button>
+        </span>
+      </div>
+      <div id="session-detail" class="card hidden">
+        <h3>Baking together</h3>
+        <p id="session-plans" class="hint"></p>
+        <p id="session-dough" class="hint"></p>
+        <label>Batches of dough to make <input id="session-dough-batches" type="number" min="0" step="1" placeholder="Auto"></label>
+        <div id="session-live"></div>
+      </div>
     </div>
     <h3>Your bake plans</h3>
     <div class="row"><button id="select-today" class="ghost small">Select today's plans</button></div>

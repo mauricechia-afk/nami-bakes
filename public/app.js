@@ -368,19 +368,52 @@ async function deletePlan(id) {
 function planCard(p) {
   const short = p.calculation && p.calculation.insufficient && p.calculation.insufficient.length
     ? `<br><span class="warn">Short on: ${p.calculation.insufficient.map(i => `${i.name} by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</span>` : '';
-  return `<div class="card">${p.status === 'planned' ? `<label class="plan-check"><input type="checkbox" class="plan-select" data-id="${p.id}" ${selectedPlans.has(p.id) ? 'checked' : ''}> Bake together</label>` : ''}<strong>${p.name}</strong> — ${fmtDate(p.date)}${p.shopifyOrderName ? ` <span class="hint">Shopify ${p.shopifyOrderName}</span>` : ''}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}${short}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Bake it</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`;
+  const selected = p.status === 'planned' && selectedPlans.has(p.id);
+  return `<div class="card plan-card${selected ? ' selected' : ''}" data-id="${p.id}" ${p.status === 'planned' ? `role="checkbox" aria-checked="${selected}" tabindex="0" aria-label="Select ${p.name} for baking together"` : ''}>${p.status === 'planned' ? `<span class="plan-check-badge" aria-hidden="true">✓</span>` : ''}<strong>${p.name}</strong> — ${fmtDate(p.date)}${p.shopifyOrderName ? ` <span class="hint">Shopify ${p.shopifyOrderName}</span>` : ''}<br>${p.items.map(i => { const r = recipes.find(x => x.id === i.recipeId); return `${fmt(i.qty)} × ${r ? r.name : i.recipeId}`; }).join(', ') || 'Dough only'}${p.dough ? `<br>Dough: ${fmt(p.dough.batchesMade)} ${p.dough.batchesMade === 1 ? 'batch' : 'batches'}${p.calculation && p.calculation.ballsAdded ? `, freeze ${fmt(p.calculation.ballsAdded)} balls` : ''}` : ''}${short}<br>${p.status === 'planned' ? `<button onclick="completePlan('${p.id}')">Bake it</button> <button class="ghost" onclick="editPlan('${p.id}')">Edit</button> ` : ''}<button class="ghost" onclick="deletePlan('${p.id}')">Delete</button></div>`;
+}
+function togglePlanSelected(id) {
+  if (selectedPlans.has(id)) selectedPlans.delete(id); else selectedPlans.add(id);
+  const card = document.querySelector(`.plan-card[data-id="${id}"]`);
+  if (card) {
+    const on = selectedPlans.has(id);
+    card.classList.toggle('selected', on);
+    card.setAttribute('aria-checked', on);
+  }
+  updateSession();
 }
 const selectedPlans = new Set();
 let sessionTimer = null;
+let lastSessionCalc = null;
 function updateSession() {
-  const card = document.getElementById('bake-session');
+  const wrap = document.getElementById('bake-session');
   const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
-  if (!chosen.length) { card.classList.add('hidden'); return; }
-  card.classList.remove('hidden');
+  if (!chosen.length) {
+    wrap.classList.add('hidden');
+    document.getElementById('session-detail').classList.add('hidden');
+    document.getElementById('session-toggle').textContent = 'Recipe';
+    lastSessionCalc = null;
+    return;
+  }
+  wrap.classList.remove('hidden');
   document.getElementById('session-plans').textContent = `Baking together: ${chosen.map(p => `${p.name} (${fmtDate(p.date)})`).join(', ')}.`;
+  updateSessionSummary();
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(previewSession, 200);
 }
+function updateSessionSummary() {
+  const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
+  if (!chosen.length) return;
+  const calc = lastSessionCalc;
+  const eggs = calc && calc.totals ? calc.totals.find(t => t.ingredientId === 'eggs') : null;
+  document.getElementById('session-summary').textContent = calc
+    ? `${chosen.length} ${chosen.length === 1 ? 'plan' : 'plans'} · ${fmt(calc.doughBatchesMade || 0)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'} dough${eggs ? ` · ${fmt(eggs.qty)} eggs` : ''}`
+    : `${chosen.length} ${chosen.length === 1 ? 'plan' : 'plans'} selected`;
+}
+document.getElementById('session-toggle').onclick = () => {
+  const detail = document.getElementById('session-detail');
+  const hidden = detail.classList.toggle('hidden');
+  document.getElementById('session-toggle').textContent = hidden ? 'Recipe' : 'Hide recipe';
+};
 async function previewSession() {
   const chosen = plans.filter(p => selectedPlans.has(p.id) && p.status === 'planned');
   if (!chosen.length) return;
@@ -392,6 +425,8 @@ async function previewSession() {
     if (doughInput !== '' && doughInput !== null) body.doughBatchesMade = Number(doughInput);
     const r = await api('/api/bake-sessions/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const calc = r.calc;
+    lastSessionCalc = calc;
+    updateSessionSummary();
     document.getElementById('session-dough').textContent = calc.doughBatchesMade > 0
       ? `Dough: make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.`
       : 'No dough needed for this bake. Cookie boxes use frozen balls.';
@@ -435,14 +470,24 @@ async function loadPlans() {
   document.getElementById('saved-plans').innerHTML =
     (upcoming.map(planCard).join('') || '<p>No bake plans yet.</p>')
     + (done.length ? `<h4 style="margin-top:16px">Done</h4>${done.map(planCard).join('')}` : '');
-  document.querySelectorAll('.plan-select').forEach(cb => {
-    cb.onchange = () => { if (cb.checked) selectedPlans.add(cb.dataset.id); else selectedPlans.delete(cb.dataset.id); updateSession(); };
+  for (const id of [...selectedPlans]) {
+    if (!plans.some(p => p.id === id && p.status === 'planned')) selectedPlans.delete(id);
+  }
+  document.querySelectorAll('.plan-card[data-id]').forEach(card => {
+    if (card.getAttribute('role') !== 'checkbox') return;
+    card.onclick = (e) => {
+      if (e.target.closest('button, a, input, select, details, summary')) return;
+      togglePlanSelected(card.dataset.id);
+    };
+    card.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePlanSelected(card.dataset.id); }
+    };
   });
 }
 async function completePlan(id) {
   const r = await api('/api/bake-plans/' + id + '/complete', { method: 'POST' });
   if (r.ballsAdded > 0) alert(`Bake completed. ${r.ballsAdded} balls added to the freezer.`);
-  await loadAll(); await loadPlans();
+  await loadAll(); await loadPlans(); updateSession();
 }
 async function loadShopping() {
   const data = await api('/api/shopping-list');
