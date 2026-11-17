@@ -311,7 +311,8 @@ async function fetchShopifyOrders() {
 async function doShopifySync({ dryRun = false, orders = null } = {}) {
   const list = orders || await fetchShopifyOrders();
   const balls = db.ingredients.find(i => i.id === 'cookie-dough-balls');
-  const result = syncOrders(list, db.bakePlans, balls ? balls.current : 0);
+  const ignoredIds = (db.shopifyIgnoredFlags || []).map(f => f.shopifyOrderId);
+  const result = syncOrders(list, db.bakePlans, balls ? balls.current : 0, {}, undefined, ignoredIds);
   if (!dryRun) {
     for (const p of result.remove) db.bakePlans = db.bakePlans.filter(x => x.id !== p);
     for (const u of result.update) {
@@ -326,6 +327,39 @@ async function doShopifySync({ dryRun = false, orders = null } = {}) {
     persist();
   }
   return { ...result, dryRun, ordersChecked: list.length };
+}
+// Dismiss a Shopify flag: the order has already been dealt with
+// (e.g. fulfilled), so it must never be flagged again on a later sync.
+// The full flag is kept in shopifyIgnoredFlags so it can be restored.
+function dismissShopifyFlag(orderId) {
+  if (!Array.isArray(db.shopifyIgnoredFlags)) db.shopifyIgnoredFlags = [];
+  if (!Array.isArray(db.shopifyFlags)) db.shopifyFlags = [];
+  const id = String(orderId);
+  const already = db.shopifyIgnoredFlags.find(f => String(f.shopifyOrderId) === id);
+  if (already) return { dismissed: already, alreadyDismissed: true, ignored: db.shopifyIgnoredFlags.length };
+  const i = db.shopifyFlags.findIndex(f => String(f.shopifyOrderId) === id);
+  if (i < 0) throw new Error(`No flagged Shopify order ${id} to dismiss`);
+  const [flag] = db.shopifyFlags.splice(i, 1);
+  const dismissed = { ...flag, ignoredAt: new Date().toISOString() };
+  db.shopifyIgnoredFlags.push(dismissed);
+  if (db.shopifySync && db.shopifySync.lastResult) db.shopifySync.lastResult.flagged = db.shopifyFlags.length;
+  persist();
+  return { dismissed, ignored: db.shopifyIgnoredFlags.length };
+}
+// Restore a dismissed flag: the next sync will flag the order again,
+// and it is also put straight back in the visible list now.
+function restoreShopifyFlag(orderId) {
+  if (!Array.isArray(db.shopifyIgnoredFlags)) db.shopifyIgnoredFlags = [];
+  if (!Array.isArray(db.shopifyFlags)) db.shopifyFlags = [];
+  const id = String(orderId);
+  const i = db.shopifyIgnoredFlags.findIndex(f => String(f.shopifyOrderId) === id);
+  if (i < 0) throw new Error(`No dismissed Shopify flag ${id} to restore`);
+  const [flag] = db.shopifyIgnoredFlags.splice(i, 1);
+  const { ignoredAt, ...restored } = flag;
+  if (!db.shopifyFlags.some(f => String(f.shopifyOrderId) === id)) db.shopifyFlags.push({ ...restored, at: new Date().toISOString() });
+  if (db.shopifySync && db.shopifySync.lastResult) db.shopifySync.lastResult.flagged = db.shopifyFlags.length;
+  persist();
+  return { restored, ignored: db.shopifyIgnoredFlags.length };
 }
 // Hourly pull, only when Shopify is connected. Errors are recorded on the
 // status, never thrown, so a failed pull does not crash the server.
@@ -422,6 +456,10 @@ function createMcpServer() {
     async ({ dryRun }) => ({ content: [{ type: 'text', text: JSON.stringify(await doShopifySync({ dryRun: dryRun === true })) }] }));
   server.tool('shopify_status', 'Last Shopify sync: when it ran, what it created, updated, removed and flagged, and any error.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(db.shopifySync || { configured: shopifyConfigured() }) }] }));
+  server.tool('shopify_dismiss_flag', 'Dismiss a flagged Shopify order that has already been dealt with, so it is never flagged again on a later sync. It can be restored with shopify_restore_flag.', { shopifyOrderId: z.string() },
+    async ({ shopifyOrderId }) => ({ content: [{ type: 'text', text: JSON.stringify(dismissShopifyFlag(shopifyOrderId)) }] }));
+  server.tool('shopify_restore_flag', 'Restore a dismissed Shopify flag, so the next sync flags the order again.', { shopifyOrderId: z.string() },
+    async ({ shopifyOrderId }) => ({ content: [{ type: 'text', text: JSON.stringify(restoreShopifyFlag(shopifyOrderId)) }] }));
   server.tool('get_shopping_list', 'Friday shopping list: below-min items plus projected need from planned bakes.', {},
     async () => ({ content: [{ type: 'text', text: JSON.stringify(doShoppingList()) }] }));
   server.tool('get_restock_forecast', 'Alias for get_shopping_list: weekly restock forecast for the Friday shop.', {},
@@ -462,6 +500,13 @@ const server = http.createServer(async (req, res) => {
       if (API_KEY && req.headers['x-api-key'] !== API_KEY) return send(res, 401, { error: 'Locked. Enter the shared password to unlock.' });
       if (req.method === 'GET' && pathname === '/api/shopify/status') return send(res, 200, db.shopifySync || { configured: shopifyConfigured(), lastRun: null, lastResult: null, lastError: null });
       if (req.method === 'GET' && pathname === '/api/shopify/flags') return send(res, 200, db.shopifyFlags || []);
+      if (req.method === 'GET' && pathname === '/api/shopify/ignored') return send(res, 200, db.shopifyIgnoredFlags || []);
+      const shopifyFlagMatch = pathname.match(/^\/api\/shopify\/flags\/([\w-]+)\/(dismiss|restore)$/);
+      if (shopifyFlagMatch && req.method === 'POST') {
+        if (!requireKey(req, res)) return;
+        try { return send(res, 200, shopifyFlagMatch[2] === 'dismiss' ? dismissShopifyFlag(shopifyFlagMatch[1]) : restoreShopifyFlag(shopifyFlagMatch[1])); }
+        catch (e) { return send(res, 400, { error: e.message }); }
+      }
       if (req.method === 'GET' && pathname === '/api/shopify/preview') {
         try { return send(res, 200, await doShopifySync({ dryRun: true })); }
         catch (e) { return send(res, 400, { error: e.message }); }
@@ -485,6 +530,8 @@ const server = http.createServer(async (req, res) => {
         db.bakePlans = b.bakePlans;
         if (Array.isArray(b.history)) db.history = b.history;
         if (Array.isArray(b.doughBatches)) db.doughBatches = b.doughBatches;
+        if (Array.isArray(b.shopifyFlags)) db.shopifyFlags = b.shopifyFlags;
+        if (Array.isArray(b.shopifyIgnoredFlags)) db.shopifyIgnoredFlags = b.shopifyIgnoredFlags;
         persist();
         return send(res, 200, { ok: true, ingredients: db.ingredients.length, recipes: db.recipes.length, bakePlans: db.bakePlans.length });
       }

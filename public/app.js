@@ -590,13 +590,23 @@ async function loadShopifyStatus() {
   try {
     const s = await api('/api/shopify/status');
     const f = await api('/api/shopify/flags');
+    const ignored = await api('/api/shopify/ignored').catch(() => []);
     const el = document.getElementById('shopify-status');
     if (!s.configured) { el.textContent = 'Shopify is not connected yet. Set SHOPIFY_STORE_DOMAIN and SHOPIFY_ACCESS_TOKEN in Railway variables.'; }
     else if (s.lastError) { el.textContent = `Last sync failed: ${s.lastError}`; }
     else if (s.lastRun) { const r = s.lastResult || {}; el.textContent = `Last sync ${new Date(s.lastRun).toLocaleString('en-SG')}: ${r.created || 0} new plans, ${r.updated || 0} updated, ${r.removed || 0} removed, ${r.flagged || 0} flagged, ${r.skipped || 0} skipped (already baked or cancelled).`; }
     else { el.textContent = 'Shopify is connected. No sync has run yet.'; }
-    document.getElementById('shopify-flags').innerHTML = f.length ? f.map(x => `<p class="warn">${x.shopifyOrderName || ''}: ${x.reason}</p>`).join('') : '';
+    document.getElementById('shopify-flags').innerHTML = f.length ? f.map(x => `<p class="warn">${x.shopifyOrderName || ''}: ${x.reason} <button class="ghost small" onclick="dismissShopifyFlag('${x.shopifyOrderId}')">Dismiss</button></p>`).join('') : '';
+    document.getElementById('shopify-ignored').innerHTML = ignored.length ? `<details><summary>${ignored.length} dismissed ${ignored.length === 1 ? 'flag' : 'flags'} (already dealt with)</summary>${ignored.map(x => `<p class="hint">${x.shopifyOrderName || ''}: ${x.reason} <button class="ghost small" onclick="restoreShopifyFlag('${x.shopifyOrderId}')">Restore</button></p>`).join('')}</details>` : '';
   } catch (e) { /* status is best effort */ }
+}
+async function dismissShopifyFlag(orderId) {
+  await api('/api/shopify/flags/' + orderId + '/dismiss', { method: 'POST' });
+  await loadShopifyStatus();
+}
+async function restoreShopifyFlag(orderId) {
+  await api('/api/shopify/flags/' + orderId + '/restore', { method: 'POST' });
+  await loadShopifyStatus();
 }
 document.getElementById('sync-shopify').onclick = async () => {
   const btn = document.getElementById('sync-shopify');

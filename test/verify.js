@@ -197,6 +197,11 @@ try {
   check('3 boxes of cookies with 33 balls on hand makes no dough', orderToPlan(cookiesOrder, 33, {}, '2026-10-13').plan.dough === null);
   check('3 boxes of cookies with 5 balls on hand makes 2 batches (18 needed, 13 short)', orderToPlan(cookiesOrder, 5, {}, '2026-10-13').plan.dough.batchesMade === 2);
   check('Order with no date is flagged, never planned on the order date', orderToPlan({ id: 1009, name: '#1009', note_attributes: [], line_items: [{ title: 'Dark Chocolate Chip Cookies, Box of 6', quantity: 1 }] }, 33).flag.kind === 'no-date');
+  const noDateOrder = { id: 1009, name: '#1009', note_attributes: [], line_items: [{ title: 'Dark Chocolate Chip Cookies, Box of 6', quantity: 1 }] };
+  const syncIgnored = syncOrders([noDateOrder], [], 33, {}, '2026-11-17', ['1009']);
+  check('A dismissed no-date flag never comes back: 0 flagged, 1 skipped', syncIgnored.flags.length === 0 && syncIgnored.skipped.length === 1 && syncIgnored.skipped[0].reason.includes('dismissed'), JSON.stringify(syncIgnored));
+  const syncNotIgnored = syncOrders([noDateOrder], [], 33, {}, '2026-11-17', []);
+  check('Without dismissing, the same no-date order is still flagged', syncNotIgnored.flags.length === 1 && syncNotIgnored.flags[0].kind === 'no-date', JSON.stringify(syncNotIgnored));
   check('Order whose delivery date has passed is skipped, assumed already baked', orderToPlan(order1015, 33, {}, '2026-11-17').skip && orderToPlan(order1015, 33, {}, '2026-11-17').skip.shopifyOrderId === '1015');
   check('Order dated today is planned, not skipped', orderToPlan(order1015, 33, {}, '2026-11-15').plan && orderToPlan(order1015, 33, {}, '2026-11-15').plan.date === '2026-11-15');
   const syncPast = syncOrders([order1015], [], 33, {}, '2026-11-17');
@@ -268,6 +273,35 @@ try {
   const shopSync = await j('/api/shopify/sync', { method: 'POST' });
   check('Shopify sync without a token fails with a clear message', typeof shopSync.error === 'string' && shopSync.error.includes('not connected'), JSON.stringify(shopSync));
 
+  console.log('Shopify flags — dismiss and restore');
+  const backupForFlags = await j('/api/backup');
+  backupForFlags.shopifyFlags = [{ kind: 'no-date', shopifyOrderId: '1009', shopifyOrderName: '#1009', reason: 'No pickup or delivery date on this order. Never bake on the order date.', at: new Date().toISOString() }];
+  backupForFlags.shopifyIgnoredFlags = [];
+  await j('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backupForFlags) });
+  const flagsBefore = await j('/api/shopify/flags');
+  check('Flagged order #1009 is listed', Array.isArray(flagsBefore) && flagsBefore.some(f => String(f.shopifyOrderId) === '1009'), JSON.stringify(flagsBefore));
+  const dismissed = await j('/api/shopify/flags/1009/dismiss', { method: 'POST' });
+  check('Dismissing #1009 removes it from flags', dismissed.dismissed && String(dismissed.dismissed.shopifyOrderId) === '1009', JSON.stringify(dismissed));
+  const flagsAfterDismiss = await j('/api/shopify/flags');
+  check('Flags are empty after dismissing #1009', Array.isArray(flagsAfterDismiss) && !flagsAfterDismiss.some(f => String(f.shopifyOrderId) === '1009'), JSON.stringify(flagsAfterDismiss));
+  const ignoredAfterDismiss = await j('/api/shopify/ignored');
+  check('Dismissed #1009 is listed under ignored', Array.isArray(ignoredAfterDismiss) && ignoredAfterDismiss.some(f => String(f.shopifyOrderId) === '1009'), JSON.stringify(ignoredAfterDismiss));
+  const dismissedAgain = await j('/api/shopify/flags/1009/dismiss', { method: 'POST' });
+  check('Dismissing an already dismissed flag does not duplicate it', dismissedAgain.alreadyDismissed === true, JSON.stringify(dismissedAgain));
+  const ignoredAfterSecondDismiss = await j('/api/shopify/ignored');
+  check('Second dismiss leaves exactly one ignored entry', Array.isArray(ignoredAfterSecondDismiss) && ignoredAfterSecondDismiss.length === 1, JSON.stringify(ignoredAfterSecondDismiss));
+  const restoredFlag = await j('/api/shopify/flags/1009/restore', { method: 'POST' });
+  check('Restoring #1009 puts it back in flags', restoredFlag.restored && String(restoredFlag.restored.shopifyOrderId) === '1009', JSON.stringify(restoredFlag));
+  const flagsAfterRestore = await j('/api/shopify/flags');
+  check('Flags list #1009 again after restoring', Array.isArray(flagsAfterRestore) && flagsAfterRestore.some(f => String(f.shopifyOrderId) === '1009'), JSON.stringify(flagsAfterRestore));
+  const ignoredAfterRestore = await j('/api/shopify/ignored');
+  check('Ignored list is empty after restoring', Array.isArray(ignoredAfterRestore) && ignoredAfterRestore.length === 0, JSON.stringify(ignoredAfterRestore));
+  const dismissMissing = await j('/api/shopify/flags/9999/dismiss', { method: 'POST' });
+  check('Dismissing a flag that does not exist fails with a clear message', typeof dismissMissing.error === 'string' && dismissMissing.error.includes('No flagged Shopify order'), JSON.stringify(dismissMissing));
+  const cleanFlags = await j('/api/backup');
+  cleanFlags.shopifyFlags = []; cleanFlags.shopifyIgnoredFlags = [];
+  await j('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleanFlags) });
+
   console.log('Backup — full export and restore');
   const backup = await j('/api/backup');
   check('Backup contains ingredients, recipes, plans and history', Array.isArray(backup.ingredients) && Array.isArray(backup.recipes) && Array.isArray(backup.bakePlans) && Array.isArray(backup.history));
@@ -336,6 +370,7 @@ try {
   const js = await j('/app.js');
   check('Dashboard and theme choices persist in localStorage', js.includes("localStorage.getItem('mep-theme')") && js.includes("localStorage.getItem('mep-dashboard')"));
   check('Low stock card says how many items are low, with stock figures', js.includes("'items'} low") && js.includes(" / min "));
+  check('Shopify flags have Dismiss and Restore, with a dismissed list', js.includes('dismissShopifyFlag') && js.includes('restoreShopifyFlag') && js.includes('/api/shopify/ignored') && html.includes('id="shopify-ignored"'));
   check('Next bake card puts date and each item on its own line', js.includes('niceDate(next.date)') && js.includes("join('<br>')"));
   check('Planned items use singular/plural, e.g. 1 brownie, 2 brownies', js.includes("itemLabel(i.recipeId, i.qty)") && js.includes("'Brownies') return 'Brownie'"));
 } catch (e) {

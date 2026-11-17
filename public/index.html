@@ -70,10 +70,11 @@
     <h2>Batch Planning</h2>
     <div class="card">
       <h3>Shopify orders</h3>
-      <p class="hint">Pulls orders from Shopify every hour and turns them into bake plans, dated on the pickup or delivery date from the order. A box of cookies uses frozen balls first, and only makes new dough for the shortfall. Orders with no date, or a product with no mapping, are flagged below, never planned on the order date.</p>
+      <p class="hint">Pulls orders from Shopify every hour and turns them into bake plans, dated on the pickup or delivery date from the order. A box of cookies uses frozen balls first, and only makes new dough for the shortfall. Orders with no date, or a product with no mapping, are flagged below, never planned on the order date. Dismiss a flag once it has been dealt with and it will not come back on the next sync. Dismissed flags are listed below and can be restored.</p>
       <div class="row"><button id="sync-shopify">Sync Shopify now</button></div>
       <p id="shopify-status" class="hint"></p>
       <div id="shopify-flags"></div>
+      <div id="shopify-ignored"></div>
     </div>
     <div class="card">
       <h3 id="plan-form-title">Plan a bake</h3>
