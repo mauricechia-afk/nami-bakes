@@ -164,7 +164,7 @@ document.getElementById('save-ingredient').onclick = async () => {
 };
 let editingRecipeId = null;
 function renderRecipes() {
-  document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`; }).join('')}</table><div class="row" style="margin-top:10px"><button class="ghost small" onclick="editRecipe('${r.id}')">Edit recipe</button><button class="danger small" onclick="deleteRecipe('${r.id}')">Delete</button></div></div>`).join('');
+  document.getElementById('recipe-list').innerHTML = recipes.map(r => `<div class="card"><strong>🧑‍🍳 ${r.name}</strong><p>${r.description || ''}</p><span class="badge">Yields: ${r.yields} ${r.yieldUnit || 'portions'}</span><table>${r.ingredients.map(i => { const ing = ingredients.find(x => x.id === i.ingredientId); return `<tr><td>${ing ? ing.name : i.ingredientId}</td><td>${fmt(i.qty)} <span class="unit">${i.unit}</span></td></tr>`; }).join('')}</table><div class="row" style="margin-top:10px"><button class="ghost small" onclick="editRecipe('${r.id}')">Edit recipe</button><button class="danger small" onclick="deleteRecipe('${r.id}')">Delete</button></div></div>`).join('');
 }
 function addRecipeIngLine(ingredientId, qty, unit) {
   const div = document.createElement('div'); div.className = 'row recipe-ing-line';
@@ -286,15 +286,15 @@ function calcSectionsHtml(calc) {
         ? `<p class="hint">Use ${fmt(used)} ${used === 1 ? 'batch' : 'batches'} in this bake, freeze ${fmt(frozen)} balls.</p>`
         : `<p class="hint">Freeze all ${fmt(frozen)} balls.</p>`;
     }
-    return `<h4>${title} — ${fmt(sr.portions)} ${unit}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>${note}`;
+    return `<h4>${title} — ${fmt(sr.portions)} ${unit}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} <span class="unit">${i.unit}</span></td></tr>`).join('')}</table>${note}`;
   }).join('');
   const direct = calc.direct.length
-    ? `<h4>From the freezer</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`
+    ? `<h4>From the freezer</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} <span class="unit">${i.unit}</span></td></tr>`).join('')}</table>`
     : '';
   return sections + direct;
 }
 function calcTotalsHtml(calc) {
-  return `<details><summary>Total ingredients (all recipes combined)</summary><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table></details>`;
+  return `<details><summary>Total ingredients (all recipes combined)</summary><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} <span class="unit">${i.unit}</span></td></tr>`).join('')}</table></details>`;
 }
 function showPlan(calc) {
   const el = document.getElementById('plan-live');

@@ -134,5 +134,18 @@ label{display:block;margin:8px 0;color:var(--teal);font-weight:600;font-size:14p
 .ok-text{color:var(--teal);font-weight:600}
 .low-text{color:var(--bronze-dark);font-weight:600}
 table{width:100%;border-collapse:collapse}td,th{padding:7px 4px;border-bottom:1px solid var(--line);text-align:left}
+/* Option C typography (2026-11-17, Maurice's pick from the preview page):
+   recipe ingredient names in Playfair Display, quantities in Inter,
+   right aligned in a neat column, units in small bronze capitals. */
+#recipe-list table td:first-child,
+#plan-live table td:first-child,
+#session-live table td:first-child{font-family:"Playfair Display",Georgia,serif;font-size:16px}
+#recipe-list table td:last-child,
+#plan-live table td:last-child,
+#session-live table td:last-child{text-align:right;white-space:nowrap;font-weight:600}
+#recipe-list table td,
+#plan-live table td,
+#session-live table td{padding:9px 4px}
+.unit{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--bronze);font-weight:600}
 .plan-line select{flex:1;min-width:160px}
 .plan-line input{flex:0 0 110px}
