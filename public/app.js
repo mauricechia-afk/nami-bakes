@@ -268,19 +268,44 @@ function planDough() {
   const v = document.getElementById('dough-batches-made').value;
   return v === '' || v === null ? undefined : { batchesMade: Number(v) };
 }
+// The recipe is shown as its base recipes first, one section each, because
+// each is made separately before combining: brownie batter is made in one
+// go (portions are aggregated across the whole bake), cookie dough is made
+// in whole batches. The flat combined total is kept in a collapsed details
+// element for reference.
+function calcSectionsHtml(calc) {
+  const sections = calc.subRecipes.map(sr => {
+    const title = sr.recipeId === 'brownies' ? 'Brownie batter' : sr.name;
+    const unit = sr.portionsUnit === 'batches'
+      ? (sr.portions === 1 ? 'batch' : 'batches')
+      : (sr.portions === 1 ? 'portion' : 'portions');
+    let note = '';
+    if (sr.recipeId === 'cookie-dough') {
+      const used = sr.doughUsed || 0, frozen = sr.ballsAdded || 0;
+      note = used > 0
+        ? `<p class="hint">Use ${fmt(used)} ${used === 1 ? 'batch' : 'batches'} in this bake, freeze ${fmt(frozen)} balls.</p>`
+        : `<p class="hint">Freeze all ${fmt(frozen)} balls.</p>`;
+    }
+    return `<h4>${title} — ${fmt(sr.portions)} ${unit}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>${note}`;
+  }).join('');
+  const direct = calc.direct.length
+    ? `<h4>From the freezer</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`
+    : '';
+  return sections + direct;
+}
+function calcTotalsHtml(calc) {
+  return `<details><summary>Total ingredients (all recipes combined)</summary><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table></details>`;
+}
 function showPlan(calc) {
   const el = document.getElementById('plan-live');
   const doughLine = (calc.doughBatchesMade !== undefined && calc.doughBatchesMade !== null && calc.doughBatchesMade > 0)
     ? `Dough: make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.`
     : 'No dough needed for this bake. Cookie boxes use frozen balls.';
   document.getElementById('dough-live').textContent = doughLine;
-  el.innerHTML = `<h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
+  el.innerHTML = `${calcSectionsHtml(calc)}
   ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this plan.</p>'}
   ${calc.totalCost !== undefined ? `<h4>Cost</h4><p>${calc.missingPrices && calc.missingPrices.length ? `Cost is incomplete, no price recorded yet for: ${calc.missingPrices.join(', ')}. Add a price when you restock to see the full cost.` : ''}</p><p>Ingredient cost: $${calc.totalCost.toFixed(2)}${calc.totalSell ? `<br>Selling price: $${calc.totalSell.toFixed(2)}<br>Margin: $${calc.margin.toFixed(2)}` : '<br>Add a selling price to the recipe to see the margin.'}</p>` : ''}
-  <details><summary>Show sub-recipes (make each in one go)</summary>
-  ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
-  ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
-  </details>`;
+  ${calcTotalsHtml(calc)}`;
 }
 // Live totals: recalculate as you type, so there is no Calculate button.
 let liveCalcTimer = null;
@@ -430,13 +455,10 @@ async function previewSession() {
     document.getElementById('session-dough').textContent = calc.doughBatchesMade > 0
       ? `Dough: make ${fmt(calc.doughBatchesMade)} ${calc.doughBatchesMade === 1 ? 'batch' : 'batches'}, use ${fmt(calc.doughUsed || 0)} in this bake, freeze ${fmt(calc.ballsAdded || 0)} balls.`
       : 'No dough needed for this bake. Cookie boxes use frozen balls.';
-    el.innerHTML = `<h4>Total ingredients needed</h4><table>${calc.totals.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>
+    el.innerHTML = `${calcSectionsHtml(calc)}
     ${calc.insufficient.length ? `<p class="warn">Not enough stock: ${calc.insufficient.map(i => `${i.name} short by ${fmt(i.shortBy)} ${i.unit}`).join(', ')}</p>` : '<p>Stock is sufficient for this bake.</p>'}
     ${calc.totalCost !== undefined ? `<h4>Cost</h4><p>Ingredient cost: $${calc.totalCost.toFixed(2)}${calc.totalSell ? `<br>Selling price: $${calc.totalSell.toFixed(2)}<br>Margin: $${calc.margin.toFixed(2)}` : ''}</p>` : ''}
-    <details><summary>Show sub-recipes (make each in one go)</summary>
-    ${calc.subRecipes.map(sr => `<h4>${sr.name} — ${fmt(sr.portions)} ${sr.portionsUnit || 'portions'}</h4><table>${sr.ingredients.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>`).join('')}
-    ${calc.direct.length ? `<h4>Direct</h4><table>${calc.direct.map(i => `<tr><td>${i.name}</td><td>${fmt(i.qty)} ${i.unit}</td></tr>`).join('')}</table>` : ''}
-    </details>`;
+    ${calcTotalsHtml(calc)}`;
     btn.disabled = calc.insufficient.length > 0;
   } catch (e) { el.innerHTML = `<p class="warn">${e.message}</p>`; btn.disabled = true; }
 }

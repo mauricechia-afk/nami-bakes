@@ -220,6 +220,13 @@ try {
   const eggsTotal = sessionPreview.calc.totals.find(t => t.ingredientId === 'eggs');
   check('Two brookies baked together need 4 eggs, not 5', eggsTotal && eggsTotal.qty === 4, JSON.stringify(eggsTotal));
   check('Two brookies baked together need 1 batch of dough, not 2, and freeze 0 balls (a full batch is used)', sessionPreview.calc.doughBatchesMade === 1 && sessionPreview.calc.ballsAdded === 0, JSON.stringify({ d: sessionPreview.calc.doughBatchesMade, b: sessionPreview.calc.ballsAdded }));
+  const browniePlan = await mkPlan('Brownie', [{ recipeId: 'brownies', qty: 1 }]);
+  const mixedPreview = await j('/api/bake-sessions/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planIds: [brookieA.id, browniePlan.id] }) });
+  const mixedBrownie = mixedPreview.calc.subRecipes.find(s => s.recipeId === 'brownies');
+  const mixedDough = mixedPreview.calc.subRecipes.find(s => s.recipeId === 'cookie-dough');
+  check('1 brookie + 1 brownie bakes as 1.5 portions of brownie batter, 5 eggs', mixedBrownie && mixedBrownie.portions === 1.5 && mixedBrownie.ingredients.find(i => i.ingredientId === 'eggs')?.qty === 5, JSON.stringify(mixedBrownie));
+  check('1 brookie + 1 brownie makes 1 batch of cookie dough, 1 egg, freezes 6 balls', mixedDough && mixedDough.portions === 1 && mixedDough.ingredients.find(i => i.ingredientId === 'eggs')?.qty === 1 && mixedPreview.calc.ballsAdded === 6, JSON.stringify(mixedDough));
+  check('1 brookie + 1 brownie needs 6 eggs in total', mixedPreview.calc.totals.find(t => t.ingredientId === 'eggs')?.qty === 6, JSON.stringify(mixedPreview.calc.totals.find(t => t.ingredientId === 'eggs')));
   const oneBrookie = await j('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: [{ recipeId: 'brookie', qty: 1 }] }) });
   check('One brookie on Auto makes 1 full batch and freezes 6 balls', oneBrookie.doughBatchesMade === 1 && oneBrookie.ballsAdded === 6, JSON.stringify({ d: oneBrookie.doughBatchesMade, b: oneBrookie.ballsAdded }));
   const doughOnly = await mkPlan('Dough only', [], 2);
